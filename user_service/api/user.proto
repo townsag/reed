@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+option go_package = "github.com/townsag/reed/users-service/api";
+
+package api;
+
+service UserService {
+    rpc GetUser (GetUserRequest) returns (UserReply) {}
+    rpc CreateUser (CreateUserRequest) returns (CreateUserReply) {}
+    rpc DeactivateUser (DeactivateUserRequest) returns (DeactivateUserReply) {}
+    // rpc LoginUser (LoginUserRequest) returns (LoginUserReply) {}
+    rpc ChangeUserPassword (ChangeUserPasswordRequest) returns (ChangeUserPasswordReply) {}
+}
+
+message User {
+    string user_id = 1;
+    string user_name = 2;
+    string email = 3;
+    string max_documents = 4;
+    // these are implicit field types
+    // I am taking that to mean semantically that they will always be set by the server 
+}
+
+message GetUserRequest {
+    string user_id = 1;
+}
+
+message UserReply {
+    User user = 1;
+    string request_id = 2;
+}
+
+message CreateUserRequest {
+    string user_name = 1;
+    string user_email = 2;
+    string password = 3;
+    optional string max_documents = 4;
+}
+
+message CreateUserReply {
+    string request_id = 1;
+    string user_id = 2;
+}
+
+message DeactivateUserRequest {
+    string user_id = 1;
+}
+
+message DeactivateUserReply {
+    string request_id = 1;
+}
+
+// message LoginUserRequest {
+//     string user_name = 1;
+//     string password = 2;
+// }
+
+// message LoginUserReply {
+//     string request_id = 1;
+//     string a
+// }
+
+message ChangeUserPasswordRequest {
+    string user_id = 1;
+    string old_password = 2;
+    string new_password = 3;
+}
+
+message ChangeUserPasswordReply {
+    string request_id = 1;
+}

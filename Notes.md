@@ -1,0 +1,231 @@
+Problem:
+- I want to be able to send short editable documents to people that are embedded in the messaging channels that we already use. 
+
+Approach:
+- use CRDTs for sharing operations between clients
+- embed an editor in the messaging platform using platform specific SDKs
+- build a websocket based backend for:
+    - proxying messages between clients that are editing the same document
+    - resolving document state on the server side
+
+Steps:
+- validate base assumptions (POC):
+    - [ ] can I use Ywasm to generate messages on the front end and then reason about where those messages need to be sent on the server side without having to parse those messages using Yrs on the message proxy server
+        -  does Ywasm expose a version vector
+    - [ ] I can use a second state based syncing protocol to bulk update clients when they are just connecting to the message proxy server
+    - [ ] can I use a combination of Yrs and codemirror to represent the collaborative text editor interface and internal state on the frontend
+        - does codemirror support providing the offset of an edit in the entire document not by line and character
+        - can I receive edit events from code mirror
+        - can I update the codemirror representation with edits that are received from the message proxy
+    - [ ] can I access this on a website in an iframe
+    - [ ] can a non interactable representation of the document state be embedded in a chat application like Imessage
+- 
+
+Yjs or Yrs or Ywasm implementation:
+- current understanding:
+    - the Yjs implementation really wants me to use their primary update api which is peer to peer and not operation based
+        - the caller creates their state vector (logical timestamp describing applied operations)
+        - the caller sends their state vector to the receiver
+        - the receiver generates a diff given the callers state vector
+        - the receiver sends the diff to the caller
+        - the caller applies the diff
+    - I dont like this approach because it requires that I build some peer to peer network on the client side or it requires that the centralized server that is relaying these diffs maintains a copy of the document in memory
+        - this will not scale to more concurrent users than can be connected to one instance of the message proxy service
+        - this does not treat the updated / operations themselves as the valuable information
+        - this requires that the message proxy service perform the expensive operation that is merging clients messages into the document state
+    - I can use the alternate approach:
+        - changes to the document create events 
+        - events contain information about updates including a timestamp describing the replica that made the change 
+        - events are sent over the websocket to message proxy service
+        - the message proxy service keeps a record of the state vectors of each replica
+        - update events are proxied to the relevant replicas based on the cached state vectors
+- yjs sync protocol:
+    - sync protocol implementation: https://github.com/y-crdt/y-sync/blob/master/src/sync.rs
+    - sync protocol notes: https://medium.com/dovetail-engineering/yjs-fundamentals-part-2-sync-awareness-73b8fabc2233
+    - binary operation message protocol notes: https://github.com/yjs/y-protocols/blob/master/PROTOCOL.md
+    - start by using the state vector approach:
+        - each client sends a state vector to the other client
+        - each client receives the state vector and uses it to create the diff that the other can use to become up to date
+    - all future messages should be Update messages generated using the on event listener syntax:
+        - Y.on('update', update => sendUpdate(update))
+- sync protocol questions:
+    - do I have to proxy every update to every peer?
+    - how will I know that a peer has received the updates that casually predate the updates that I am sending
+        - what if there is a third peer that is network partitioned from the first peer but not the second peer
+    - does an update object include some sort of version vector that describes:
+        - the state at which the update was applied
+        - the logical timestamp of the update
+            - might be looking for this: encode_state_vector_from_update_v1
+- implementation detail for sending many operations from the message proxy service to the client:
+    - multiple update messages can be merged at the message proxy service into one update message
+    - we can use this to trade processing time on the message proxy service for lower network overhead and simpler client code
+- what is the role of transactions in yjs / yrs
+- can use the doc.on('update') function in ywasm to record and emit Update objects
+- can use this function to parse updates on the server side:
+    - y-crdt/yrs/src/updates/decoder.rs
+- can use the code here to operate on the Update object in memory
+    - y-crdt/yrs/src/update.rs
+
+## CRUD Microservice development ideas and directions:
+- try using schema first development for the api:
+    - start with the open api v 3.0.1 spec and generate golang code using one of:
+        - https://github.com/oapi-codegen/oapi-codegen
+        - https://github.com/ogen-go/ogen
+- domains of functionalities:
+    - users
+    - documents
+    - permissions
+- the strangeloop video about best practices and code generation (this is literal gold)
+    - https://youtu.be/j6ow-UemzBc?si=tPWQIm2dRfyyM_Ho
+- the goto video about starting with a monolith and them splitting off your components
+    - https://www.youtube.com/watch?v=9Q7GANXn02k
+
+## Feature Sets:
+- Users:
+    - create a user
+    - get a users information
+    - update the mutable configuration of a user
+        - password
+    - delete a user (soft delete)
+- Documents (read only regarding the document content):
+    - list the documents that are owned by a user
+        - sort parameters
+        - filter parameters
+        - pagination
+    - change the status of a user relative to a document
+        - view, edit
+    - list the documents that are owned by another person but shared with a user
+        - sort parameters
+        - filter parameters
+        - pagination
+    - search for documents that are owned by a person or shared by that person using fuzzy full text search on the document title and contents
+        - filter params
+        - pagination
+    - share a document with a user
+        - that document should be searchable in their shared documents page
+        - they can access the document using the link
+    - create a sharable link to an existing document
+        - readable or editable by anyone
+    - create a sharable link to an existing document that only works for users the document has been shared with
+        - viewers and editors should be able to see live updates, editors should be able to see updates
+    - create a new document
+        - the new document should be associated with at least one user
+- login:
+    - given a username and password, issue a signed JWT that authenticates the bearer as having the users identity
+
+## Implementation Details:
+- deprecated:
+    - handling document editing permissions:
+        - the users service can write updates to permissions to a stream and serve permissions using rest
+        - the message proxy service can maintain a cache of editing permissions as well as listen for events that would change the permissions for a user
+        - upon receiving a new websocket connection, the message proxy service could validate that the user has permission to edit the document by looking in the cache or calling the users service
+        - upon receiving update messages to the permissions associated with a document, the message proxy service could invalidate the permissions in the cache and disconnect any now invalid websocket connections
+        - there is also a clever approach to authentication in here that I have not found yet, maybe try session based
+    - handling searching for a document using text search
+        -
+    - handling creating a new document:
+        - the users service writes to its database that there is a new document and the users that it is shared with
+        - connecting to the message proxy service using that userId, documentId and an authentication token that identifies the user as the correct userId would yield a valid websocket connection
+- implementation idea 2:
+    - use the api gateway pattern:
+        - one api gateway service serves as the entrypoint for the application
+        - api gateway service is rest based but communicates with services using mixed communication protocols
+        - responsibilities:
+            - reverse proxy for other services:
+                - can also aggregate and reformat the responses from other services
+            - ssl termination if ssl termination is not handled at the load balancer level
+            - rate limiting
+            - authentication / authorization
+            - fan out to multiple services if necessary
+            - entrypoint for distributed tracing
+            - probably issues tokens but this may be split into an idp service
+            - create a new document:
+                - call the users service to determine that the user referred to by the verified token data exists
+                - call the document service to create the new document
+            - share a document with another user:
+                - call the users service to determine if the user referred to by the token data exists
+                - call the document service to add permissions to the document for that user
+            - create an anonymous link to a document
+            - start editing a document
+                - validate the users token
+                - verify that the user has permission to access this document by calling the document service
+                - issue a link to the websocket service that includes routing information like document id as well as authentication information
+                    - kinda like a presigned url
+    - users microservice
+        - use grpc
+        - responsible for maintaining user related crud state
+            - create users
+            - update user details
+            - read user details
+            - mark user for deletion
+    - documents microservice
+        - use grpc
+        - responsible for maintaining document related crud state
+            - includes permissions for users to edit documents
+            - create a new document
+                - must be associated with at least one user as editable
+            - share a document with a new user
+                - update the permissions associated with a document
+            - update the permissions on a document
+                - update the permissions table associated with a document
+                - must send an event to the message proxy service to signal that a user has lost access
+            - search for a document:
+                - filters:
+                    - created by
+                    - shared by
+                    - shared with
+                    - full text search
+                - sort:
+                    - created at
+                    - created by
+                    - last modified
+            - create sharable link to a document that anyone can use
+                - instead of associating a user id with the document permissions we associate a unique hash
+                - store that unique hash in anonymous permissions table with correct permissions
+    - merge service:
+        - responsible for persisting updates to the backend
+            - persist document metadata:
+                - publish edit messages to be read by the document microservice
+            - persist document content:
+                - publish a document content message to the stream that can be read by the document microservice
+            - persist individual updates (can make small batches of updates by client id)
+                - persist updates to an update store such that they are queryable by client id and logical timestamp
+            - persist document binary representation:
+                - write merged YDoc state to object storage?
+                - read from the stream and write document binary representation to the object store in batches
+        - responsible for serving merged document binary representation to the frontend
+            - web server component that acts as a middleware between the api gateway service and the merged document binary representation object storage
+            - may also instead act as a middleware between the message proxy service as the merged document binary representation object store
+        - responsible for serving updates to the message proxy service:
+            - message proxy service will request updates from a client after a given offset (or from a version vector)
+            - serve a merged update object to the message proxy service
+    - message proxy service
+        - responsible for syncing document updates and document state between members of a set of clients and between sets of clients and the backend persistent storage
+            - during sync step one request the document binary representation from the merge service
+            - during sync step two send document updates to respective websocket clients and write document updates to message stream
+        - responsible for sending missing updates to clients
+            - call the get update by version vector route on the document service
+        - route between instances of the message proxy service at the load balancer level using document id hash and information about existing sessions
+- how to handle token creation:
+    - start here: https://www.alexedwards.net/blog/basic-authentication-in-go
+    - https://pkg.go.dev/github.com/golang-jwt/jwt/v5
+    - https://neon.com/guides/golang-jwt
+
+- use the handler + service + repository pattern for writing the go applications
+    - this may be a good place to start with an example:
+        - https://github.com/minghsu0107/go-random-chat/blob/kafka/pkg/user/service.go#L32
+
+## Tools:
+- json request body validation:
+    - https://github.com/go-playground/validator
+- use OAth2 for authentication?
+- message broker:
+    - NATS
+- database logic stub generation:
+    - solc
+- 
+
+## Names:
+- Reed
+- Sticky
+- Indigo

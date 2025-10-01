@@ -1,0 +1,11 @@
+CREATE TABLE users (
+    -- id VARCHAR(32) PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
+    user_name VARCHAR(32) NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    max_documents INTEGER DEFAULT 16,
+    hashed_password VARCHAR(255) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

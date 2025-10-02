@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
+        "DBTX",
+        "pgtype",
+        "pgxpool",
         "sqlc",
         "townsag",
         "ywasm"

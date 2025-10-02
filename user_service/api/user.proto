@@ -16,7 +16,7 @@ message User {
     string user_id = 1;
     string user_name = 2;
     string email = 3;
-    string max_documents = 4;
+    int32 max_documents = 4;
     // these are implicit field types
     // I am taking that to mean semantically that they will always be set by the server 
 }

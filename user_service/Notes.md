@@ -46,3 +46,45 @@ cd .
 export PATH="$PATH:$(go env GOPATH)/bin"
 protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative api/user.proto
 ```
+
+
+Consider this directory structure:
+myproject/
+├── cmd/
+│   ├── server/
+│   │   └── main.go          # Server entry point
+│   └── client/
+│       └── main.go          # Client entry point (if needed)
+├── api/
+│   └── proto/
+│       └── v1/
+│           └── service.proto # Proto definitions
+├── pkg/
+│   └── api/
+│       └── v1/
+│           ├── service.pb.go       # Generated protobuf code
+│           └── service_grpc.pb.go  # Generated gRPC code
+├── internal/
+│   ├── server/
+│   │   └── server.go        # gRPC server implementation
+│   ├── service/
+│   │   └── service.go       # Business logic
+│   ├── repository/
+│   │   └── repository.go    # Data access layer
+│   └── config/
+│       └── config.go        # Configuration
+├── Makefile                  # Build and proto generation commands
+├── go.mod
+└── go.sum
+
+
+## Go Best Practices to consider:
+- accept interfaces and return structs:
+    - https://bryanftan.medium.com/accept-interfaces-return-structs-in-go-d4cab29a301b
+    - the consuming package should receive its dependencies as an interface
+        - this allows the consumer to define the interface that it receives
+    - the producing package should return a concrete type so that the consumer 
+      can more accurately reason about the returned value
+- export the field of a struct and the new method to create a struct but don't
+  export the struct itself so that any calling code that wants to use an instance
+  of that struct has to use the new method to create an instance of the struct

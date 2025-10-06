@@ -1,9 +1,13 @@
 {
     "cSpell.words": [
         "DBTX",
+        "pgconn",
         "pgtype",
         "pgxpool",
+        "qwer",
         "sqlc",
+        "testcontainer",
+        "testcontainers",
         "townsag",
         "ywasm"
     ]

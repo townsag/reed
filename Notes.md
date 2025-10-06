@@ -65,12 +65,16 @@ Yjs or Yrs or Ywasm implementation:
     - y-crdt/yrs/src/updates/decoder.rs
 - can use the code here to operate on the Update object in memory
     - y-crdt/yrs/src/update.rs
+- look at the sync protocol for inspiration
+- probably should read this: file:///Users/andrewtownsend/Downloads/GROUP2016.pdf
+- https://github.com/kapv89/yjs-scalable-ws-backend?tab=readme-ov-file
 
 ## CRUD Microservice development ideas and directions:
 - try using schema first development for the api:
     - start with the open api v 3.0.1 spec and generate golang code using one of:
         - https://github.com/oapi-codegen/oapi-codegen
         - https://github.com/ogen-go/ogen
+    - ultimately decided that I was trying to reinvent grpc 
 - domains of functionalities:
     - users
     - documents
@@ -79,6 +83,9 @@ Yjs or Yrs or Ywasm implementation:
     - https://youtu.be/j6ow-UemzBc?si=tPWQIm2dRfyyM_Ho
 - the goto video about starting with a monolith and them splitting off your components
     - https://www.youtube.com/watch?v=9Q7GANXn02k
+- directory structure inspiration:
+    - https://github.com/minghsu0107/go-random-chat?tab=readme-ov-file
+    - https://github.com/golang-standards/project-layout
 
 ## Feature Sets:
 - Users:
@@ -206,6 +213,10 @@ Yjs or Yrs or Ywasm implementation:
         - responsible for sending missing updates to clients
             - call the get update by version vector route on the document service
         - route between instances of the message proxy service at the load balancer level using document id hash and information about existing sessions
+        - use sharding on the document id to route clients to different instances of the message proxy service but allow clients to hypothetically connect to any instance of the message proxy service
+            - having an affinity for one instance of the message proxy service reduces the load on our message bus
+            - making the affinity between clients and the message proxy service weak makes the relationship between the client and the server more flexible and prevents the need to migrate connections between servers when scaling up or scaling down
+        - insight: routing to the correct instance of the message proxy service should be implemented at the message proxy service entrypoint instead of at the api gateway level, this keeps routing implementation details and message proxy service internal state encapsulated inside the message proxy service boundary
 - how to handle token creation:
     - start here: https://www.alexedwards.net/blog/basic-authentication-in-go
     - https://pkg.go.dev/github.com/golang-jwt/jwt/v5
@@ -219,13 +230,44 @@ Yjs or Yrs or Ywasm implementation:
 - json request body validation:
     - https://github.com/go-playground/validator
 - use OAth2 for authentication?
+    - https://neon.com/guides/golang-jwt
+    - https://www.alexedwards.net/blog/basic-authentication-in-go
 - message broker:
     - NATS
 - database logic stub generation:
     - solc
-- 
+- find other rust tools:
+    - https://blessed.rs/crates#section-networking-subsection-websockets
+- gRPC documentaion:
+    - protobuf: https://protobuf.dev/programming-guides/proto3/#nested
+    - minimal example: https://github.com/grpc/grpc-go/tree/master/examples/helloworld
+- service mesh tools for smart routing to instance of the message proxy service
+    - https://github.com/linkerd/linkerd2/
 
 ## Names:
 - Reed
 - Sticky
 - Indigo
+
+## Platform integration ideas:
+- discord:
+    - https://discord.com/developers/docs/activities/overview
+    - https://discord.com/developers/docs/activities/building-an-activity
+    - https://discord.com/developers/docs/activities/how-activities-work
+    - https://github.com/discord/embedded-app-sdk-examples/tree/main/discord-activity-starter
+
+## Thoughts on golang:
+- the design of a language reflects the taste / values of the person designing the language
+- these values reflect decisions on a series of tradeoffs:
+    - go values readability and simplicity over expressiveness
+        - presumably this makes organizations of engineers more productive because everyone can understand each others codebases
+    - go has a huge investment in tooling
+        - further drives standardization of go projects
+    - go values explicitness over conciseness
+        - no mechanism for inheritance
+- occasionally I do miss object oriented programming
+    - errors
+        - each error struct implements the Error and Unwrap methods instead of having one parent error implement those methods and then defining a number of child errors
+    - tests
+        - each test has to implement the same setup code
+        - python unit testing framework allows the test class to do setup once and then each test method of the test class can access shared testing resources

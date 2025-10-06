@@ -1,37 +1,84 @@
 package service
 
-type ErrorType int
+import "fmt"
 
-const (
-	ErrorNotFound ErrorType = iota
-	ErrorRepoImpl 
-	ErrorConflict
-	ErrorInvalid
-)
+// could use this interface with empty isDomainError method to distinguish between errors that 
+// fall under the domain error umbrella, not necessary
+// type DomainError interface {
+// 	error
+// 	isDomainError()	
+// }
 
-type DomainError struct {
-	Type ErrorType
+type NotFoundError struct {
+	Msg string
+}
+
+func (e *NotFoundError) Error() string {
+	return e.Msg
+}
+
+type RepoImplError struct {
 	Msg string
 	Err error
 }
 
-func (e *DomainError) Error() string {
-	if e.Err != nil {
-		return e.Msg + ": " + e.Err.Error()
-	}
-	return e.Msg
+func (e *RepoImplError) Error() string {
+	return fmt.Sprintf("repository implementation error, msg: %s, err: %v", e.Msg, e.Err)
 }
 
-func NotFound(msg string) *DomainError {
-	return &DomainError{
-		Type: ErrorNotFound,
+func (e *RepoImplError) Unwrap() error {
+	return e.Err
+}
+
+type UniqueConflictError struct {
+	Msg string
+	Err error
+}
+
+func (e *UniqueConflictError) Error() string {
+	return fmt.Sprintf("unique conflict, msg: %s, err: %v", e.Msg, e.Err)
+}
+
+func (e *UniqueConflictError) Unwrap() error {
+	return e.Err
+}
+
+type InvalidError struct {
+	Msg string
+	Err error
+}
+
+func (e *InvalidError) Error() string {
+	return fmt.Sprintf("invalid input, msg: %s, err: %v", e.Msg, e.Err)
+}
+
+func (e *InvalidError) Unwrap() error {
+	return e.Err
+}
+
+func NotFound(msg string) *NotFoundError {
+	return &NotFoundError{
 		Msg: msg,
 	}
 }
 
-func RepoImpl(err error) *DomainError {
-	return &DomainError{
-		Type: ErrorRepoImpl,
+func RepoImpl(msg string, err error) *RepoImplError {
+	return &RepoImplError{
+		Msg: msg,
+		Err: err,
+	}
+}
+
+func UniqueConflict(msg string, err error) *UniqueConflictError {
+	return &UniqueConflictError{
+		Msg: msg,
+		Err: err,
+	}
+}
+
+func Invalid(msg string, err error) *InvalidError {
+	return &InvalidError{
+		Msg: msg,
 		Err: err,
 	}
 }

@@ -74,12 +74,19 @@ func (r *UserRepository) CreateUser(
 	if err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) {
-			// TODO: parse the error code here and determine a semantic error type
-			// conflict?
-			// db implementation error?
-			return 0, service.RepoImpl(err)
+			// parse the error code here and determine a semantic error type
+			// unique conflict
+			if pgError.Code == "23505" {
+				return 0, service.UniqueConflict(
+					fmt.Sprintf("constraint: %s, detail: %s", pgError.ConstraintName, pgError.Detail), 
+					err,
+				)
+			} else {
+				// db implementation error
+				return 0, service.RepoImpl(pgError.Error(), pgError)
+			}
 		} else {
-			return 0, service.RepoImpl(err)
+			return 0, service.RepoImpl("unknown error encountered when creating user", err)
 		}
 	}
 	return userId, nil
@@ -91,7 +98,7 @@ func (r *UserRepository) GetUserById(ctx context.Context, userId int32) (*servic
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, service.NotFound(fmt.Sprintf("No user found for userId: %d", userId))
 		} else {
-			return nil, service.RepoImpl(err)
+			return nil, service.RepoImpl(err.Error(), err)
 		}
 	}
 	return repositoryToService(user), nil
@@ -102,9 +109,9 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, userEmail string) (
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, service.NotFound(fmt.Sprintf("No user found with email: %s", userEmail))
+		} else {
+			return nil, service.RepoImpl(err.Error(), err)
 		}
-	} else {
-		return nil, service.RepoImpl(err)
 	}
 	return repositoryToService(user), nil
 }
@@ -115,7 +122,7 @@ func (r *UserRepository) DeactivateUser (ctx context.Context, userId int32) erro
 		if errors.Is(err, pgx.ErrNoRows) {
 			return service.NotFound(fmt.Sprintf("No user found with userId: %d to deactivate", userId))
 		} else {
-			return service.RepoImpl(err)
+			return service.RepoImpl(err.Error(), err)
 		}
 	}
 	return nil
@@ -131,7 +138,7 @@ func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, newHa
 		if errors.Is(err, pgx.ErrNoRows) {
 			return service.NotFound(fmt.Sprintf("No user found with userId: %d to update the password", userId))
 		} else {
-			return service.RepoImpl(err)
+			return service.RepoImpl(err.Error(), err)
 		}
 	}
 	return nil

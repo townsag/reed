@@ -1,12 +1,13 @@
 package repository_test
 
 import (
-	"testing"
-	"os"
 	"errors"
+	"os"
+	"testing"
 
 	"github.com/townsag/reed/user_service/internal/repository"
 	"github.com/townsag/reed/user_service/internal/service"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestMain(m *testing.M) {
@@ -25,7 +26,7 @@ func TestCreateUser(t *testing.T) {
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
 	// pass some dummy data to the user repository create user function
-	userId, err := userRepo.CreateUser(t.Context(), "testUser", "test@example.com", 100, "asdfasdfasdfasdf")
+	userId, err := userRepo.CreateUser(t.Context(), "testUser", "test@example.com", 100, "asdfasdf")
 	if err != nil {
 		t.Fatalf("failed to create user with error: %v", err)
 	}
@@ -46,8 +47,9 @@ func TestCreateUser(t *testing.T) {
 	if user.MaxDocuments != 100 {
 		t.Errorf("want maxDocuments: %d, got maxDocuments: %d", 100, user.MaxDocuments)
 	}
-	if user.HashedPassword != "asdfasdfasdfasdf" {
-		t.Errorf("want hashedPassword: %s, got hashedPassword: %s", "asdfasdfasdfasdf", user.HashedPassword)
+	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte("asdfasdf"))
+	if err != nil {
+		t.Errorf("failed to validate that the stored hashed password is the hash of the provided password: %v", err)
 	}
 }
 
@@ -58,7 +60,7 @@ func TestGetUserEmail(t *testing.T) {
 		t.Fatalf("unable to connect to postgres test container: %v", err)
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
-	userId, err := userRepo.CreateUser(t.Context(), "testUser2", "test2@example.com", 100, "asdfasdfasdfasdf")
+	userId, err := userRepo.CreateUser(t.Context(), "testUser2", "test2@example.com", 100, "asdfasdf")
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
@@ -215,7 +217,7 @@ func TestModifyPassword(t *testing.T) {
 		t.Fatalf("failed to create a user: %v", err)
 	}
 	// update the hashed password of the user
-	err = userRepo.ModifyPassword(t.Context(), userId, "qwer")
+	err = userRepo.ModifyPassword(t.Context(), userId, "asdf", "qwer")
 	if err != nil {
 		t.Fatalf("failed to modify the password: %v", err)
 	}
@@ -224,8 +226,9 @@ func TestModifyPassword(t *testing.T) {
 		t.Fatalf("failed to get the modified user: %v", err)
 	}
 	// verify that the hashed password is updated
-	if user.HashedPassword != "qwer" {
-		t.Errorf("got hashed password: %s, want updated hashed password: %s", user.HashedPassword, "qwer")
+	err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte("qwer"))
+	if err != nil {
+		t.Errorf("failed to validate that the new hashed password corresponds to the new password: %v", err)
 	}
 	// verify that updating the hashed password changed the last modified date
 	isBefore := user.CreatedAt.Before(user.LastModified)
@@ -241,7 +244,7 @@ func TestModifyPasswordNotFound(t *testing.T) {
 		t.Fatalf("unable to connect to postgres container: %v", err)
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
-	err = userRepo.ModifyPassword(t.Context(), 1234, "qwer")
+	err = userRepo.ModifyPassword(t.Context(), 1234, "zxcv", "qwer")
 	var notFoundErr *service.NotFoundError
 	if !errors.As(err, &notFoundErr) {
 		t.Errorf("when modifying the password of a user that does not exist, want not found error, got: %v", err)

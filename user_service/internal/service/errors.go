@@ -4,10 +4,10 @@ import "fmt"
 
 // could use this interface with empty isDomainError method to distinguish between errors that 
 // fall under the domain error umbrella, not necessary
-// type DomainError interface {
-// 	error
-// 	isDomainError()	
-// }
+type DomainError interface {
+	error
+	isDomainError()	
+}
 
 type NotFoundError struct {
 	Msg string
@@ -16,6 +16,8 @@ type NotFoundError struct {
 func (e *NotFoundError) Error() string {
 	return e.Msg
 }
+
+func (e *NotFoundError) isDomainError() {}
 
 type RepoImplError struct {
 	Msg string
@@ -30,6 +32,8 @@ func (e *RepoImplError) Unwrap() error {
 	return e.Err
 }
 
+func (e *RepoImplError) isDomainError() {}
+
 type UniqueConflictError struct {
 	Msg string
 	Err error
@@ -43,6 +47,8 @@ func (e *UniqueConflictError) Unwrap() error {
 	return e.Err
 }
 
+func (e *UniqueConflictError) isDomainError() {}
+
 type InvalidError struct {
 	Msg string
 	Err error
@@ -55,6 +61,18 @@ func (e *InvalidError) Error() string {
 func (e *InvalidError) Unwrap() error {
 	return e.Err
 }
+
+func (e *InvalidError) isDomainError() {}
+
+type PasswordMismatchError struct {
+	Err error
+}
+
+func (e *PasswordMismatchError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *PasswordMismatchError) isDomainError() {}
 
 func NotFound(msg string) *NotFoundError {
 	return &NotFoundError{
@@ -79,6 +97,12 @@ func UniqueConflict(msg string, err error) *UniqueConflictError {
 func Invalid(msg string, err error) *InvalidError {
 	return &InvalidError{
 		Msg: msg,
+		Err: err,
+	}
+}
+
+func PasswordMismatch(err error) *PasswordMismatchError {
+	return &PasswordMismatchError{
 		Err: err,
 	}
 }

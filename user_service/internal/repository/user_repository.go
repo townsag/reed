@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
+
 	sqlc "github.com/townsag/reed/user_service/internal/repository/sqlc/db"
 	"github.com/townsag/reed/user_service/internal/service"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TODO: figure out what the logging story is for the repo object?
@@ -20,13 +23,14 @@ import (
 // 		- how will the calling code know if we should return a 404 or a 500?
 type UserRepository struct {
 	queries *sqlc.Queries
+	pool *pgxpool.Pool
 }
 
 // pgxpool implements the DBTX interface defined by the generated sqlc code
 // func NewUserRepository(conn *pgxpool.Pool) *UserRepository {
 // ^removed as to follow golang best practice of accepting interfaces and returning structs
-func NewUserRepository(conn sqlc.DBTX) *UserRepository {
-	return &UserRepository{ queries: sqlc.New(conn)}
+func NewUserRepository(conn *pgxpool.Pool) *UserRepository {
+	return &UserRepository{ queries: sqlc.New(conn), pool: conn }
 }
 
 // add the helper method for converting from the User struct defined by the generated
@@ -62,13 +66,17 @@ func (r *UserRepository) CreateUser(
 	userName string,
 	email string,
 	maxDocuments int, 
-	hashedPassword string,
+	password string,
 ) (userId int32, err error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, service.RepoImpl("error creating hash of users new password", err)
+	}
 	params := sqlc.CreateUserAndReturnIdParams{
 		UserName: userName,
 		Email: email,
 		MaxDocuments: pgtype.Int4{ Int32: int32(maxDocuments), Valid: true },
-		HashedPassword: hashedPassword,
+		HashedPassword: string(hashedPassword),
 	}
 	userId, err = r.queries.CreateUserAndReturnId(ctx, params)
 	if err != nil {
@@ -128,18 +136,52 @@ func (r *UserRepository) DeactivateUser (ctx context.Context, userId int32) erro
 	return nil
 }
 
-func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, newHashedPassword string) (error) {
-	params := sqlc.ChangeUserPasswordParams{
-		HashedPassword: newHashedPassword,
-		ID: userId,
+func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, oldPassword string, newPassword string) error {
+	// create a transaction
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return service.RepoImpl(
+			"failed to create a transaction when modifying password",
+			err,
+		)
 	}
-	_, err := r.queries.ChangeUserPassword(ctx, params)
+	defer tx.Rollback(ctx)
+	txQueries := r.queries.WithTx(tx)
+	// read the password associated with this user
+	user, err := txQueries.GetUserById(ctx, userId)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return service.NotFound(fmt.Sprintf("No user found with userId: %d to update the password", userId))
+			return service.NotFound(fmt.Sprintf("No user found with userId: %d to update", userId))
 		} else {
-			return service.RepoImpl(err.Error(), err)
+			return service.RepoImpl("unexpected error found when reading user", err)
 		}
 	}
+	// validate that the old password matches the hashed password in the database
+	if err = bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(oldPassword)); err != nil {
+		return service.PasswordMismatch(err)
+	}
+	// update the database to reflect the change in hashed password
+	newHashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return service.RepoImpl("error creating hash of users new password", err)
+	}
+	param := sqlc.ChangeUserPasswordParams{
+		HashedPassword: string(newHashedPassword),
+		ID: user.ID,
+	}
+	_, err = txQueries.ChangeUserPassword(ctx, param)
+	if err != nil {
+		return service.RepoImpl("error updating user record with new hashed password", err)
+	}
+	err = tx.Commit(ctx)
+	if err != nil {
+		return service.RepoImpl("error committing the update password hash transaction", err)
+	} 
 	return nil
 }
+
+// consider adding something like this
+// func (r *PostgresUserRepository) UpdateByID(ctx context.Context, userID int, updateFn func(user *User) (bool, error)) error {
+// https://threedots.tech/post/database-transactions-in-go/
+// This is a generic way for us to update a user record, it allows us to define the update application logic in the 
+// service layer but define the update database logic in the repository layer

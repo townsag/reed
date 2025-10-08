@@ -40,12 +40,6 @@
         - adding an existing field to a new oneOf
         - changing a oneOf with only one field into an explicit presence field (optional)
 
-## Generating Server Stubs
-```bash
-cd .
-export PATH="$PATH:$(go env GOPATH)/bin"
-protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative api/user.proto
-```
 
 
 Consider this directory structure:

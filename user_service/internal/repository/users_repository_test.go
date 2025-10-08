@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 }
 
 // verify the happy path on creating and retrieving a user by id
-func TestCreateUser(t *testing.T) {
+func TestCreateUserIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres test container: %v", err)
@@ -54,7 +54,7 @@ func TestCreateUser(t *testing.T) {
 }
 
 // verify the happy path on creating and retrieving a user by email
-func TestGetUserEmail(t *testing.T) {
+func TestGetUserEmailIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres test container: %v", err)
@@ -74,7 +74,7 @@ func TestGetUserEmail(t *testing.T) {
 }
 
 // verify the failure path on creating a user: we should not be able to create a user with a duplicate email or username
-func TestCreateDuplicateUserEmail(t *testing.T) {
+func TestCreateDuplicateUserEmailIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -97,7 +97,7 @@ func TestCreateDuplicateUserEmail(t *testing.T) {
 }
 
 // verify the failure path on creating a user: we should not be able to create a user with duplicate username
-func TestCreateDuplicateUserName(t *testing.T) {
+func TestCreateDuplicateUserNameIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -120,7 +120,7 @@ func TestCreateDuplicateUserName(t *testing.T) {
 }
 
 // verify the failure path on getting a user by id: we should not be able to get a user that does not exist
-func TestGetMissingUserId(t *testing.T) {
+func TestGetMissingUserIdIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -143,7 +143,7 @@ func TestGetMissingUserId(t *testing.T) {
 }
 
 // verify the failure path on getting a user by email: we should not be able to get a user that does not exist
-func TestGetMissingUserEmail(t *testing.T) {
+func TestGetMissingUserEmailIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -159,7 +159,7 @@ func TestGetMissingUserEmail(t *testing.T) {
 
 // verify the happy path on deactivating a user
 //	- also verify that deactivating a user updates it's last modified
-func TestDeactivateUser(t *testing.T) {
+func TestDeactivateUserIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -191,7 +191,7 @@ func TestDeactivateUser(t *testing.T) {
 }
 
 // verify the failure path on deactivating a user: we should not be able to deactivate a user that does not exist
-func TestDeactivateUserNotFound(t *testing.T) {
+func TestDeactivateUserNotFoundIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -206,7 +206,7 @@ func TestDeactivateUserNotFound(t *testing.T) {
 
 // verify the happy path on modifying a password
 // - also verify that modifying a users password updates it's last modified
-func TestModifyPassword(t *testing.T) {
+func TestModifyPasswordIntegration(t *testing.T) {
 	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
@@ -238,7 +238,7 @@ func TestModifyPassword(t *testing.T) {
 }
 
 // verify the failure path on modifying a password: we should not be able to modify the password of a user that does not exist
-func TestModifyPasswordNotFound(t *testing.T) {
+func TestModifyPasswordNotFoundIntegration(t *testing.T) {
 		conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)

@@ -3,3 +3,4 @@ note_ui/
 api-gateway/
 
 *.env
+user_service/go-stdlib-common-interfaces.md

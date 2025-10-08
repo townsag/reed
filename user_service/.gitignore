@@ -1,2 +1,3 @@
 *.pb.go
 internal/repository/sqlc/db
+coverage.out

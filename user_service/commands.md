@@ -14,6 +14,8 @@ protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=p
 go test ./...
 ```
 
+## Run all tests with coverage profiling 
+
 ## Run just unit test
 ```bash
 go test ./.. -v -run '^Test.*Unit$'
@@ -23,3 +25,10 @@ go test ./.. -v -run '^Test.*Unit$'
 ```bash
 go test ./... -v -run '^Test.*Integration$'
 ```
+
+## Run tests and visualize coverage
+```bash
+go test ./... -v -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
+

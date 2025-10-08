@@ -87,7 +87,7 @@ func TestCreateDuplicateUserEmail(t *testing.T) {
 	// create a user with the same duplicate email
 	_, err = userRepo.CreateUser(t.Context(), "testUser3Duplicate", "test3@example.com", 100, "asdf")
 	var uniqueError *service.UniqueConflictError
-	// errors.Is is useful for type equivalence checks on the tree of errors
+	// errors.Is is useful for value equivalence checks on the tree of errors
 	// errors.As traverses the tree of errors and finds the first error in the tree that can be assigned
 	// to the type pointed at by target. Target had to be a pointer to a pointer because we are going to
 	// modify the pointer target itself instead of modifying the value pointed to by target

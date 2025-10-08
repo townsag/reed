@@ -53,7 +53,7 @@ func repositoryToService(user sqlc.User) *service.User {
 		UserId: user.ID,
 		UserName: user.UserName,
 		Email: user.Email,
-		MaxDocuments: int(user.MaxDocuments.Int32),
+		MaxDocuments: user.MaxDocuments.Int32,
 		HashedPassword: user.HashedPassword,
 		IsActive: user.IsActive.Bool,
 		CreatedAt: user.CreatedAt.Time,
@@ -65,7 +65,7 @@ func (r *UserRepository) CreateUser(
 	ctx context.Context, 
 	userName string,
 	email string,
-	maxDocuments int, 
+	maxDocuments int32, 
 	password string,
 ) (userId int32, err error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -75,7 +75,7 @@ func (r *UserRepository) CreateUser(
 	params := sqlc.CreateUserAndReturnIdParams{
 		UserName: userName,
 		Email: email,
-		MaxDocuments: pgtype.Int4{ Int32: int32(maxDocuments), Valid: true },
+		MaxDocuments: pgtype.Int4{ Int32: maxDocuments, Valid: true },
 		HashedPassword: string(hashedPassword),
 	}
 	userId, err = r.queries.CreateUserAndReturnId(ctx, params)

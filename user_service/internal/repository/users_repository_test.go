@@ -239,7 +239,7 @@ func TestModifyPasswordIntegration(t *testing.T) {
 
 // verify the failure path on modifying a password: we should not be able to modify the password of a user that does not exist
 func TestModifyPasswordNotFoundIntegration(t *testing.T) {
-		conn, err := setupPostgresContainer()
+	conn, err := setupPostgresContainer()
 	if err != nil {
 		t.Fatalf("unable to connect to postgres container: %v", err)
 	}
@@ -248,5 +248,24 @@ func TestModifyPasswordNotFoundIntegration(t *testing.T) {
 	var notFoundErr *service.NotFoundError
 	if !errors.As(err, &notFoundErr) {
 		t.Errorf("when modifying the password of a user that does not exist, want not found error, got: %v", err)
+	}
+}
+
+// verify the failure path on modifying a password: we should not be able to modify the password if the provided password is wrong
+func TestModifyPasswordInvalidIntegration(t *testing.T) {
+	conn, err := setupPostgresContainer()
+	if err != nil {
+		t.Fatalf("unable to connect to postgres container: %v", err)
+	}
+	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
+	userId, err := userRepo.CreateUser(t.Context(), "testUser7", "test7@example.com", 12, "asdf")
+	if err != nil {
+		t.Fatalf("failed to create a user: %v", err)
+	}
+	// update the hashed password of the user
+	err = userRepo.ModifyPassword(t.Context(), userId, "qwer", "qwer")
+	var passwordError *service.PasswordMismatchError
+	if !errors.As(err, &passwordError) {
+		t.Errorf("when trying to update a users password with the wrong old password, want PasswordMatchError, got: %v", err)
 	}
 }

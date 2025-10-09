@@ -7,7 +7,8 @@ import (
 	"net"
 
 	"google.golang.org/grpc"
-
+	
+	"github.com/townsag/reed/user_service/pkg/middleware"
 	"github.com/townsag/reed/user_service/internal/config"
 	"github.com/townsag/reed/user_service/internal/repository"
 	"github.com/townsag/reed/user_service/internal/service"
@@ -37,7 +38,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(middleware.RequestIdInterceptor()))
 	pb.RegisterUserServiceServer(s, userServer)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

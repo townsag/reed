@@ -82,3 +82,41 @@ myproject/
 - export the field of a struct and the new method to create a struct but don't
   export the struct itself so that any calling code that wants to use an instance
   of that struct has to use the new method to create an instance of the struct
+- the internal package is enforced by the golang toolchain as a place for things 
+  that are not publicly available
+- the pkg package is a convention for things that are part of the public api of your
+  service and are meant to be used by other servers
+    - examples:
+        - convenient warpers for generated grpc client
+        - domain models
+        - domain errors
+        - validation logic
+        - event definitions
+
+## TODO:
+- [ ] client:
+    - client is generated with grpc? Do I just have to call generated stubs
+- [ ] middleware
+    - example:
+        - https://github.com/grpc/grpc-go/tree/master/examples/features/interceptor
+    - common middleware:
+        - https://github.com/grpc-ecosystem/go-grpc-middleware
+            - look here for both tracing and metrics interceptors
+    - [ ] request id
+        - return the request id in either the response or in the error status details
+        - alternatively return the request id in the response headers
+        - look for request id in google standard protobuf
+    - logging
+- [ ] observability tools
+    - [ ] tracing
+    - [ ] metrics
+    - [ ] logging aggregation
+- [ ] integration testing at the server level
+    - use test containers to create an instance of the user service and run calls against it
+    - documentation for creating custom images for test containers
+        - https://golang.testcontainers.org/features/creating_container/
+- [ ] unit testing at the service level:
+    - [ ] create a mock repository and run tests against the service which uses the mock repository
+    - [ ] create a mock stream and run tests against the service verifying that it publishes messages to the mock stream
+- [ ] write user updates to a stream:
+    - integrate NATs

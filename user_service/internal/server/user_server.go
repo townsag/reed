@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/townsag/reed/user_service/api"
 	"github.com/townsag/reed/user_service/internal/service"
@@ -17,9 +18,6 @@ Responsibilities:
 	- the routing of requests to the correct handler
 	- marshaling and unmarshaling of messages 
 	- authentication 
-
-- TODO:
-	- refactor so that I always return the request id even on error response 
 */
 
 type UserServiceServerImpl struct {
@@ -77,7 +75,6 @@ func (s *UserServiceServerImpl) GetUser(
 			Email: user.Email,
 			MaxDocuments: user.MaxDocuments, 
 		},
-		// TODO: add request id
 	}, nil
 }
 
@@ -103,7 +100,6 @@ func (s *UserServiceServerImpl) CreateUser(
 		return nil, serviceToGRPCError(err)
 	}
 	return &pb.CreateUserReply{
-		// TODO: add request id
 		UserId: userId,
 	}, nil
 }
@@ -111,7 +107,7 @@ func (s *UserServiceServerImpl) CreateUser(
 func (s *UserServiceServerImpl) DeactivateUser(
 	ctx context.Context,
 	deactivateUserReq *pb.DeactivateUserRequest,
-) (*pb.DeactivateUserReply, error) {
+) (*emptypb.Empty, error) {
 	if deactivateUserReq.UserId == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "user_id is required, received: %d", deactivateUserReq.UserId)
 	}
@@ -120,13 +116,13 @@ func (s *UserServiceServerImpl) DeactivateUser(
 		return nil, serviceToGRPCError(err)
 	}
 	// TODO: add request id
-	return &pb.DeactivateUserReply{}, nil
+	return &emptypb.Empty{}, nil
 }
 
 func (s *UserServiceServerImpl) ChangePassword(
 	ctx context.Context,
 	changePasswordRequest *pb.ChangeUserPasswordRequest,
-) (*pb.ChangeUserPasswordReply, error) {
+) (*emptypb.Empty, error) {
 	if changePasswordRequest.OldPassword == "" {
 		return nil, status.Error(codes.InvalidArgument, "user old_password is a required argument")
 	}
@@ -138,5 +134,5 @@ func (s *UserServiceServerImpl) ChangePassword(
 		return nil, serviceToGRPCError(err)
 	}
 	// TODO: add request id
-	return &pb.ChangeUserPasswordReply{}, nil
+	return &emptypb.Empty{}, nil
 }

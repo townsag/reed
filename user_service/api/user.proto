@@ -1,15 +1,15 @@
 syntax = "proto3";
 
 option go_package = "github.com/townsag/reed/users-service/api";
-
+import "google/protobuf/empty.proto";
 package api;
 
 service UserService {
     rpc GetUser (GetUserRequest) returns (UserReply) {}
     rpc CreateUser (CreateUserRequest) returns (CreateUserReply) {}
-    rpc DeactivateUser (DeactivateUserRequest) returns (DeactivateUserReply) {}
+    rpc DeactivateUser (DeactivateUserRequest) returns (google.protobuf.Empty) {}
     // rpc LoginUser (LoginUserRequest) returns (LoginUserReply) {}
-    rpc ChangeUserPassword (ChangeUserPasswordRequest) returns (ChangeUserPasswordReply) {}
+    rpc ChangeUserPassword (ChangeUserPasswordRequest) returns (google.protobuf.Empty) {}
 }
 
 message User {
@@ -27,7 +27,6 @@ message GetUserRequest {
 
 message UserReply {
     User user = 1;
-    string request_id = 2;
 }
 
 message CreateUserRequest {
@@ -38,16 +37,11 @@ message CreateUserRequest {
 }
 
 message CreateUserReply {
-    string request_id = 1;
     int32 user_id = 2;
 }
 
 message DeactivateUserRequest {
     int32 user_id = 1;
-}
-
-message DeactivateUserReply {
-    string request_id = 1;
 }
 
 // message LoginUserRequest {
@@ -56,7 +50,6 @@ message DeactivateUserReply {
 // }
 
 // message LoginUserReply {
-//     string request_id = 1;
 //     string a
 // }
 
@@ -64,8 +57,4 @@ message ChangeUserPasswordRequest {
     int32 user_id = 1;
     string old_password = 2;
     string new_password = 3;
-}
-
-message ChangeUserPasswordReply {
-    string request_id = 1;
 }

@@ -158,6 +158,9 @@ Yjs or Yrs or Ywasm implementation:
                 - verify that the user has permission to access this document by calling the document service
                 - issue a link to the websocket service that includes routing information like document id as well as authentication information
                     - kinda like a presigned url
+        - compose responses from responses from internal services
+            - example:
+                - when getting all the users that can edit a document, call the document service to get the list of user_ids then call the users service to get user information from the list of user ids
     - users microservice
         - use grpc
         - responsible for maintaining user related crud state
@@ -206,6 +209,8 @@ Yjs or Yrs or Ywasm implementation:
         - responsible for serving updates to the message proxy service:
             - message proxy service will request updates from a client after a given offset (or from a version vector)
             - serve a merged update object to the message proxy service
+        - the merge service could be multi region if necessary, assuming we can have a jetstream stream in multiple regions
+            - the api gateway in that region could read the document state from the binary representation storage associated with that region
     - message proxy service
         - responsible for syncing document updates and document state between members of a set of clients and between sets of clients and the backend persistent storage
             - during sync step one request the document binary representation from the merge service
@@ -217,6 +222,10 @@ Yjs or Yrs or Ywasm implementation:
             - having an affinity for one instance of the message proxy service reduces the load on our message bus
             - making the affinity between clients and the message proxy service weak makes the relationship between the client and the server more flexible and prevents the need to migrate connections between servers when scaling up or scaling down
         - insight: routing to the correct instance of the message proxy service should be implemented at the message proxy service entrypoint instead of at the api gateway level, this keeps routing implementation details and message proxy service internal state encapsulated inside the message proxy service boundary
+        - use event driven architecture with local cache to have fresh/hot data about which users have which permissions relative to a document
+            - listen on a document_id stream
+            - cache permissions with the document id as the key
+            - fallback to the document service for stale cache
 - how to handle token creation:
     - start here: https://www.alexedwards.net/blog/basic-authentication-in-go
     - https://pkg.go.dev/github.com/golang-jwt/jwt/v5
@@ -271,3 +280,10 @@ Yjs or Yrs or Ywasm implementation:
     - tests
         - each test has to implement the same setup code
         - python unit testing framework allows the test class to do setup once and then each test method of the test class can access shared testing resources
+
+## Distributed Systems Best Practices:
+- use asynchronous communication when possible
+- persistent state should be:
+    - decoupled from application logic in terms of deployment
+    - multi-region
+    - eventually consistent

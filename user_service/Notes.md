@@ -102,11 +102,12 @@ myproject/
     - common middleware:
         - https://github.com/grpc-ecosystem/go-grpc-middleware
             - look here for both tracing and metrics interceptors
-    - [ ] request id
+    - [x] request id
         - return the request id in either the response or in the error status details
         - alternatively return the request id in the response headers
         - look for request id in google standard protobuf
     - logging
+        - log at each logically significant branch in your code the outcome of that branch
 - [ ] observability tools
     - [ ] tracing
     - [ ] metrics

@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+option go_package = "github.com/townsag/reed/document_service/api/v1";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+package v1;
+
+service DocumentService {
+    rpc CreateDocument (CreateDocumentRequest) returns (CreateDocumentReply) {}
+    rpc GetDocument (GetDocumentRequest) returns (GetDocumentReply) {}
+    rpc ListDocumentsByOwner (ListDocumentsOwnerRequest) returns (ListDocumentsOwnerReply) {}
+    rpc ListDocumentsSharedWithUser(ListSharedDocumentsRequest) returns (ListSharedDocumentsReply) {}
+    rpc GetPermissionsOfUserDocument(GetPermissionsRequest) returns (GetPermissionsReply) {}
+    rpc UpsertPermissionUser(UpsertPermissionUserRequest) returns (google.protobuf.Empty) {}
+    rpc CreatePrincipal(CreatePrincipalRequest) returns (CreatePrincipalReply) {}
+    rpc UpdatePermissionPrincipal(UpdatePermissionPrincipalRequest) returns (google.protobuf.Empty) {}
+}
+
+message Document {
+    string document_id = 1;
+    string document_name = 2;
+    optional string description = 3;
+    google.protobuf.Timestamp created_at = 4;
+    google.protobuf.Timestamp last_modified_at = 5;
+}
+
+message Cursor {
+    SortField sort_field = 1;
+    optional string last_seen_value = 2;
+    optional string last_seen_document_id = 3;
+
+    enum SortField {
+        SORT_FIELD_CREATED_AT = 0;
+        SORT_FIELD_LAST_MODIFIED_AT = 1;
+    }
+}
+
+enum Permission {
+    PERMISSION_VIEWER = 0;
+    PERMISSION_EDITOR = 1;
+    PERMISSION_OWNER = 2;
+}
+
+message DocumentPermission {
+    Document document = 1;
+    Permission permission = 2;
+}
+
+message CreateDocumentRequest {
+    string owner_user_id = 1;
+    string document_name = 2;
+}
+
+message CreateDocumentReply {
+    string document_id = 1;
+}
+
+message GetDocumentRequest {
+    string document_id = 1;
+}
+
+message GetDocumentReply {
+    Document document = 1;
+}
+
+message ListDocumentsOwnerRequest {
+    int32 user_id = 1;
+    optional Cursor cursor = 2;
+    optional int32 page_size = 3;
+    // TODO: add filters
+}
+
+// this leads me to believe that streaming responses are not the best approach for
+// simple crud apis: https://grpc.io/docs/guides/performance/
+// use repeated fields instead: https://protobuf.dev/programming-guides/proto3/#field-labels
+message ListDocumentsOwnerReply {
+    repeated Document documents = 2;
+    Cursor cursor = 3;
+    // ^return the cursor object so that it can be used in future requests
+}
+
+message ListSharedDocumentsRequest {
+    int32 user_id = 1;
+    optional Cursor cursor = 2;
+    optional int32 page_size = 3;
+    // TODO: add filters
+}
+
+// this reply holds the documents that have been shared with the user as well as the users
+// permissions on those documents
+message ListSharedDocumentsReply {
+    repeated DocumentPermission document_permission = 1;
+    Cursor cursor = 2;
+}
+
+message GetPermissionsRequest {
+    string document_id = 1;
+    int32 user_id = 2;
+}
+
+message GetPermissionsReply {
+    Permission permission = 1;
+}
+
+message UpsertPermissionUserRequest {
+    int32 user_id = 1;
+    string document_id = 2;
+    Permission permission = 3;
+}
+
+message CreatePrincipalRequest {
+    string document_id = 1;
+    Permission permission = 2;
+}
+
+message CreatePrincipalReply {
+    string principal_id = 1;
+}
+
+message UpdatePermissionPrincipalRequest {
+    string principal_id = 1;
+    string document_id = 2;
+    Permission permission = 3;
+}

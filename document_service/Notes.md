@@ -117,3 +117,12 @@ CREATE TABLE permissions {
 };
 
 - consider adding support for security groups
+
+## Thoughts on pagination and api design:
+- pagination is necessary when retrieving more than a trivial number of items
+- offset based pagination is not suitable whenever the set of things that is being paginated over is changing
+  - this is because updates can result in the location of elements in a page to shift, or which page an element can end up in
+  - this can cause calling client code to never see old items that have always been there
+- the latency associated with offset based pagination grows linearly with the size of the offset
+- this is one of the reasons that cursor based pagination is useful, it prevents the possibility of "lost writes" from the perspective of the client
+  - using cursor based pagination to scan an ordered index on a table forces us to start from the spot that we left off at next time we return a value, even if the number of elements in the table on either side of the last visited element has changed

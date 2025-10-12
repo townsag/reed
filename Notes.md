@@ -115,6 +115,7 @@ Yjs or Yrs or Ywasm implementation:
         - readable or editable by anyone
     - create a sharable link to an existing document that only works for users the document has been shared with
         - viewers and editors should be able to see live updates, editors should be able to see updates
+        - owners of a document should be able to see the list of shared links they have created
     - create a new document
         - the new document should be associated with at least one user
 - login:
@@ -287,3 +288,5 @@ Yjs or Yrs or Ywasm implementation:
     - decoupled from application logic in terms of deployment
     - multi-region
     - eventually consistent
+- if a microservice also ships a client library with a local cache component then that client library is another part of the api for that microservice that needs to be versioned and updated
+    - making the api configurable and minimal means that the calling code does not need to take on a lot of conflicting dependencies from multiple client libraries

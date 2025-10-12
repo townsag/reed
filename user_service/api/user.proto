@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/townsag/reed/users-service/api";
+option go_package = "github.com/townsag/reed/users_service/api";
 import "google/protobuf/empty.proto";
 package api;
 

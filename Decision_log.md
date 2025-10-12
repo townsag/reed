@@ -1,0 +1,19 @@
+- Access patterns for lists of documents:
+    - use cursor based pagination instead of using offset based pagination
+    - the set of documents shared with a user could change quickly, if we use offset based pagination and the set of documents shared with a user changes then the user might not see some documents at all or might see some documents multiple times when linearly traversing through the documents
+        - traverse the index of a document on some indexed value like created at, use the document id as the tiebreaker for documents created at the same time
+    - provide a useful was to search documents:
+        - sorting:
+            - support few different types of sorting because each field that we sort on has to als be a field that we index on. This is an implementation detail of cursor based pagination.
+        - for documents that a user owns:
+            - filters:
+                - shared with a destination user by the current user
+        - for documents that are shared with a user:
+            - filters:
+                - shared with the current user by a source user
+        - regardless of ownership:
+            - filters
+                - last modified at
+                - created at
+            - queries:
+                - text search

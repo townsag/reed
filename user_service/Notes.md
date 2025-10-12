@@ -94,6 +94,12 @@ myproject/
         - event definitions
 
 ## TODO:
+- short term goal:
+    - make something that is baseline usable
+    - reasons:
+        - experience the positive feedback loop that is using the tool that I am developing
+        - get feedback early so that I can validate the implicit assumptions in my approach
+        - find more motivation to work on the project by seeing early results
 - [ ] client:
     - client is generated with grpc? Do I just have to call generated stubs
 - [ ] middleware

@@ -148,7 +148,7 @@ func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, oldPa
 	defer tx.Rollback(ctx)
 	txQueries := r.queries.WithTx(tx)
 	// read the password associated with this user
-	user, err := txQueries.GetUserById(ctx, userId)
+	user, err := txQueries.GetUserForUpdate(ctx, userId)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return service.NotFound(fmt.Sprintf("No user found with userId: %d to update", userId))

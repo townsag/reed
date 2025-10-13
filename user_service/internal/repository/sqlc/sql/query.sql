@@ -8,6 +8,15 @@ SELECT id, user_name, email, max_documents, hashed_password, is_active, created_
 FROM users 
 WHERE id = $1;
 
+-- name: GetUserForUpdate :one
+SELECT id, user_name, email, max_documents, hashed_password, is_active, created_at, last_modified 
+FROM users 
+WHERE id = $1
+FOR UPDATE;
+-- this allows us to read and update the password with serializability guarantees
+-- reading the row with for update locks the record at the row level so that
+-- other operations cannot update, delete, or select for update on that row
+
 -- name: GetUserByEmail :one
 SELECT id, user_name, email, max_documents, hashed_password, is_active, created_at, last_modified
 FROM users

@@ -8,31 +8,42 @@ package v1;
 service DocumentService {
     rpc CreateDocument (CreateDocumentRequest) returns (CreateDocumentReply) {}
     rpc GetDocument (GetDocumentRequest) returns (GetDocumentReply) {}
+    rpc UpdateDocument (UpdateDocumentRequest) returns (google.protobuf.Empty) {}
+    rpc DeleteDocument (DeleteDocumentRequest) returns (google.protobuf.Empty) {}
+    // TODO: consider refactoring to list documents by user and list permissions by document
+    // this may be a simpler api surface
     rpc ListDocumentsByOwner (ListDocumentsOwnerRequest) returns (ListDocumentsOwnerReply) {}
     rpc ListDocumentsSharedWithUser(ListSharedDocumentsRequest) returns (ListSharedDocumentsReply) {}
-    rpc GetPermissionsOfUserDocument(GetPermissionsRequest) returns (GetPermissionsReply) {}
+    // this is meant to be an inexpensive rpc for authentication
+    rpc GetPermissionsOfPrincipalOnDocument(GetPermissionsRequest) returns (GetPermissionsReply) {}
+    // this is meant to be a more expensive rpc for showing information to the user and not authentication
+    rpc ListPermissionsOnDocument(ListPermissionsOnDocumentRequest) returns (ListPermissionsOnDocumentReply) {}
+    // consider using upsert permission principal that encompases the logic for both of them
     rpc UpsertPermissionUser(UpsertPermissionUserRequest) returns (google.protobuf.Empty) {}
-    rpc CreatePrincipal(CreatePrincipalRequest) returns (CreatePrincipalReply) {}
-    rpc UpdatePermissionPrincipal(UpdatePermissionPrincipalRequest) returns (google.protobuf.Empty) {}
+    rpc CreateGuest(CreateGuestRequest) returns (CreateGuestReply) {}
+    rpc UpdatePermissionGuest(UpdatePermissionGuestRequest) returns (google.protobuf.Empty) {}
+    // rpc DeletePermissionsUser
 }
 
 message Document {
     string document_id = 1;
-    string document_name = 2;
+    optional string document_name = 2;
     optional string description = 3;
     google.protobuf.Timestamp created_at = 4;
     google.protobuf.Timestamp last_modified_at = 5;
 }
 
 message Cursor {
-    SortField sort_field = 1;
+    reserved 1;
+    reserved "sort_field";
     optional string last_seen_value = 2;
     optional string last_seen_document_id = 3;
-
-    enum SortField {
-        SORT_FIELD_CREATED_AT = 0;
-        SORT_FIELD_LAST_MODIFIED_AT = 1;
-    }
+    
+    // SortField sort_field = 1;
+    // enum SortField {
+    //     SORT_FIELD_CREATED_AT = 0;
+    //     SORT_FIELD_LAST_MODIFIED_AT = 1;
+    // }
 }
 
 enum Permission {
@@ -41,14 +52,18 @@ enum Permission {
     PERMISSION_OWNER = 2;
 }
 
-message DocumentPermission {
-    Document document = 1;
-    Permission permission = 2;
+message Recipient {
+    oneof recipient_type {
+        int32 user_id = 1;
+        string principal_id = 2;
+    }
+    string recipient_id = 3;
 }
 
 message CreateDocumentRequest {
     string owner_user_id = 1;
-    string document_name = 2;
+    optional string document_name = 2;
+    optional string document_description = 3;
 }
 
 message CreateDocumentReply {
@@ -61,6 +76,18 @@ message GetDocumentRequest {
 
 message GetDocumentReply {
     Document document = 1;
+}
+
+message UpdateDocumentRequest {
+    string document_id = 1;
+    // string user_id = 2;
+    optional string name = 3;
+    optional string description = 4;
+}
+
+message DeleteDocumentRequest {
+    string document_id = 1;
+    string user_id = 2;
 }
 
 message ListDocumentsOwnerRequest {
@@ -89,8 +116,13 @@ message ListSharedDocumentsRequest {
 // this reply holds the documents that have been shared with the user as well as the users
 // permissions on those documents
 message ListSharedDocumentsReply {
-    repeated DocumentPermission document_permission = 1;
+    repeated DocumentPermission document_permissions = 1;
     Cursor cursor = 2;
+
+    message DocumentPermission {
+        Document document = 1;
+        Permission permission = 2;
+    }
 }
 
 message GetPermissionsRequest {
@@ -102,23 +134,40 @@ message GetPermissionsReply {
     Permission permission = 1;
 }
 
+message ListPermissionsOnDocumentRequest {
+    string document_id = 1;
+}
+
+message ListPermissionsOnDocumentReply {
+    repeated RecipientPermission recipient_permissions = 1;
+
+    message RecipientPermission {
+        Recipient recipient = 1;
+        Permission Permission = 2;
+        google.protobuf.Timestamp created_at = 3;
+        google.protobuf.Timestamp last_modified_at = 4;
+    }
+}
+
 message UpsertPermissionUserRequest {
     int32 user_id = 1;
     string document_id = 2;
     Permission permission = 3;
 }
 
-message CreatePrincipalRequest {
+message CreateGuestRequest {
     string document_id = 1;
-    Permission permission = 2;
+    int32 user_id = 2;
+    // ^user that created the Guest
+    Permission permission = 3;
 }
 
-message CreatePrincipalReply {
-    string principal_id = 1;
+message CreateGuestReply {
+    string guest_id = 1;
 }
 
-message UpdatePermissionPrincipalRequest {
-    string principal_id = 1;
+message UpdatePermissionGuestRequest {
+    string guest_id = 1;
     string document_id = 2;
     Permission permission = 3;
 }

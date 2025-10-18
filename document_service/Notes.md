@@ -126,3 +126,10 @@ CREATE TABLE permissions {
 - the latency associated with offset based pagination grows linearly with the size of the offset
 - this is one of the reasons that cursor based pagination is useful, it prevents the possibility of "lost writes" from the perspective of the client
   - using cursor based pagination to scan an ordered index on a table forces us to start from the spot that we left off at next time we return a value, even if the number of elements in the table on either side of the last visited element has changed
+
+## Events to send:
+- document is deleted
+  - still need to figure out what it means for a document to be deleted, like do these things get permanently deleted? Can a user still be the owner of a document if that document is marked for deletion
+- permission is updated 
+  - the case where a user is already actively interacting with the message proxy service via a websocket connection and we need to either increase their permissions or close the connection
+  - should start warming up the cache for a document because it is likely that we will have a new connection for that document

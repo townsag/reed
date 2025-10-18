@@ -162,6 +162,10 @@ Yjs or Yrs or Ywasm implementation:
         - compose responses from responses from internal services
             - example:
                 - when getting all the users that can edit a document, call the document service to get the list of user_ids then call the users service to get user information from the list of user ids
+            - perform validation checks, it is important to perform validation checks at the api gateway level because the api gateway has access to all the microservice. This prevents the microservices from having a lot of interdependencies.
+                - example:
+                    - when creating a document that document needs to have at least one valid owner. The api gateway should call the user service to see if the provided user is valid and the documents service to create the document. This means that the user and the document service can stay simple and the api gateway can be in charge of cross-service issues
+                - this approach has a tradeoff, the api gateway service now contains business logic for creating documents. This runs the risk of the apigateway becoming its own monolith, the cure becomes the disease
     - users microservice
         - use grpc
         - responsible for maintaining user related crud state
@@ -290,3 +294,14 @@ Yjs or Yrs or Ywasm implementation:
     - eventually consistent
 - if a microservice also ships a client library with a local cache component then that client library is another part of the api for that microservice that needs to be versioned and updated
     - making the api configurable and minimal means that the calling code does not need to take on a lot of conflicting dependencies from multiple client libraries
+
+## Tasks:
+- migrate users service to use uuids for users instead of integers
+- add logging to both the document service and the users service
+- other observability things
+- think about the partition scheme for the postgres table
+    - if we partition on document id how will we get all the documents shared with a user from the permissions table?
+    - what limitations come from not being able to read all the permissions that a user has from the same instance?
+        - we dont want to have transactions that span multiple instances
+        - we partition the guests table on the doucment id associated with that guest
+    - we really dont want to do cross partition joins

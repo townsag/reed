@@ -32,3 +32,8 @@ go test ./... -v -coverprofile=coverage.out
 go tool cover -html=coverage.out
 ```
 
+## Generating code with sqlc
+```bash
+cd internal/repository/sqlc
+sqlc generate
+```

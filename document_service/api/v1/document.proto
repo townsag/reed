@@ -10,19 +10,17 @@ service DocumentService {
     rpc GetDocument (GetDocumentRequest) returns (GetDocumentReply) {}
     rpc UpdateDocument (UpdateDocumentRequest) returns (google.protobuf.Empty) {}
     rpc DeleteDocument (DeleteDocumentRequest) returns (google.protobuf.Empty) {}
-    // TODO: consider refactoring to list documents by user and list permissions by document
-    // this may be a simpler api surface
-    rpc ListDocumentsByOwner (ListDocumentsOwnerRequest) returns (ListDocumentsOwnerReply) {}
-    rpc ListDocumentsSharedWithUser(ListSharedDocumentsRequest) returns (ListSharedDocumentsReply) {}
+
+    rpc ListDocumentsByPrincipal (ListDocumentByPrincipalRequest) returns (ListDocumentsByPrincipalReply) {}
     // this is meant to be an inexpensive rpc for authentication
     rpc GetPermissionsOfPrincipalOnDocument(GetPermissionsRequest) returns (GetPermissionsReply) {}
     // this is meant to be a more expensive rpc for showing information to the user and not authentication
     rpc ListPermissionsOnDocument(ListPermissionsOnDocumentRequest) returns (ListPermissionsOnDocumentReply) {}
-    // consider using upsert permission principal that encompases the logic for both of them
-    rpc UpsertPermissionUser(UpsertPermissionUserRequest) returns (google.protobuf.Empty) {}
+    
     rpc CreateGuest(CreateGuestRequest) returns (CreateGuestReply) {}
+    rpc UpsertPermissionUser(UpsertPermissionUserRequest) returns (google.protobuf.Empty) {}
     rpc UpdatePermissionGuest(UpdatePermissionGuestRequest) returns (google.protobuf.Empty) {}
-    // rpc DeletePermissionsUser
+    rpc DeletePermissionsPrincipal (DeletePermissionsPrincipalRequest) returns (google.protobuf.Empty) {}
 }
 
 message Document {
@@ -34,16 +32,16 @@ message Document {
 }
 
 message Cursor {
-    reserved 1;
-    reserved "sort_field";
+    // reserved 1;
+    // reserved "sort_field";
+    SortField sort_field = 1;
     optional string last_seen_value = 2;
     optional string last_seen_document_id = 3;
     
-    // SortField sort_field = 1;
-    // enum SortField {
-    //     SORT_FIELD_CREATED_AT = 0;
-    //     SORT_FIELD_LAST_MODIFIED_AT = 1;
-    // }
+    enum SortField {
+        SORT_FIELD_CREATED_AT = 0;
+        SORT_FIELD_LAST_MODIFIED_AT = 1;
+    }
 }
 
 enum Permission {
@@ -57,7 +55,6 @@ message Recipient {
         int32 user_id = 1;
         string principal_id = 2;
     }
-    string recipient_id = 3;
 }
 
 message CreateDocumentRequest {
@@ -90,32 +87,21 @@ message DeleteDocumentRequest {
     string user_id = 2;
 }
 
-message ListDocumentsOwnerRequest {
-    int32 user_id = 1;
-    optional Cursor cursor = 2;
-    optional int32 page_size = 3;
-    // TODO: add filters
+
+message ListDocumentByPrincipalRequest {
+    Recipient recipient = 1;
+    repeated Permission permission_filter = 2;
+    // ^these are the permission levels for which you want to see documents that the given 
+    // principal has access to
+    optional Cursor cursor = 3;
+    // ^the cursor encapsulated sorting information and offset information
+    optional int32 page_size = 4;
 }
 
 // this leads me to believe that streaming responses are not the best approach for
 // simple crud apis: https://grpc.io/docs/guides/performance/
 // use repeated fields instead: https://protobuf.dev/programming-guides/proto3/#field-labels
-message ListDocumentsOwnerReply {
-    repeated Document documents = 2;
-    Cursor cursor = 3;
-    // ^return the cursor object so that it can be used in future requests
-}
-
-message ListSharedDocumentsRequest {
-    int32 user_id = 1;
-    optional Cursor cursor = 2;
-    optional int32 page_size = 3;
-    // TODO: add filters
-}
-
-// this reply holds the documents that have been shared with the user as well as the users
-// permissions on those documents
-message ListSharedDocumentsReply {
+message ListDocumentsByPrincipalReply {
     repeated DocumentPermission document_permissions = 1;
     Cursor cursor = 2;
 
@@ -149,12 +135,6 @@ message ListPermissionsOnDocumentReply {
     }
 }
 
-message UpsertPermissionUserRequest {
-    int32 user_id = 1;
-    string document_id = 2;
-    Permission permission = 3;
-}
-
 message CreateGuestRequest {
     string document_id = 1;
     int32 user_id = 2;
@@ -166,8 +146,22 @@ message CreateGuestReply {
     string guest_id = 1;
 }
 
-message UpdatePermissionGuestRequest {
-    string guest_id = 1;
+message UpsertPermissionUserRequest {
+    int32 user_id = 1;
     string document_id = 2;
     Permission permission = 3;
+}
+
+message UpdatePermissionGuestRequest {
+    string guest_id = 1;
+    // guests can only have permissions on one document so we don't want to 
+    // take a document id here, or we would have to validate it against the document
+    // id in the database. Taking a document id here gives the impression to the 
+    // calling code that they can associate the guest with arbitrary documents
+    Permission permission = 3;
+}
+
+message DeletePermissionsPrincipalRequest {
+    Recipient recipient = 1;
+    string document_id = 2;
 }

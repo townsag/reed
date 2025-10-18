@@ -1,16 +1,20 @@
 {
-    "cSpell.words": [
-        "DBTX",
-        "emptypb",
-        "jetstream",
-        "pgconn",
-        "pgtype",
-        "pgxpool",
-        "qwer",
-        "sqlc",
-        "testcontainer",
-        "testcontainers",
-        "townsag",
-        "ywasm"
-    ]
+  "cSpell.words": [
+    "DBTX",
+    "emptypb",
+    "execrows",
+    "jackc",
+    "jetstream",
+    "pgconn",
+    "pgtype",
+    "pgxpool",
+    "qwer",
+    "serializability",
+    "sqlc",
+    "testcontainer",
+    "testcontainers",
+    "Timestamptz",
+    "townsag",
+    "ywasm"
+  ]
 }

@@ -1,0 +1,36 @@
+erDiagram
+    DOCUMENTS ||--o{ PERMISSIONS : "has"
+    USERS ||--o{ PERMISSIONS : "granted to"
+    GUESTS ||--o| PERMISSIONS : "granted to"
+    GUESTS |o--|| DOCUMENTS : "created for"
+    
+    DOCUMENTS {
+        uuid id PK
+        string title
+        text content
+        datetime created_at
+        datetime updated_at
+    }
+    
+    USERS {
+        int id PK
+        string username
+        string email
+        datetime created_at
+    }
+    
+    GUESTS {
+        uuid id PK
+        uuid document_id FK
+        string description
+        datetime created_at
+    }
+    
+    PERMISSIONS {
+        uuid recipient_id PK
+        string recipient_type "user, guest"
+        uuid document_id PK, FK
+        string permissions_level "view, edit, own"
+        string created_by
+        datetime created_at
+    }

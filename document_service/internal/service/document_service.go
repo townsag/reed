@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // TODO: come up with a definitive approach for creating enums
@@ -24,7 +26,7 @@ const (
 )
 
 type Document struct {
-	ID string
+	ID uuid.UUID
 	Name *string
 	Description *string
 	CreatedAt time.Time
@@ -34,7 +36,7 @@ type Document struct {
 type Cursor struct {
 	SortField SortField
 	LastSeenTime time.Time
-	LastSeenDocument string
+	LastSeenDocument uuid.UUID
 }
 
 type DocumentPermission struct {
@@ -43,7 +45,7 @@ type DocumentPermission struct {
 }
 
 type RecipientPermission struct {
-	RecipientId string
+	RecipientId uuid.UUID
 	Permission Permission
 	CreatedAt time.Time
 	LastModifiedAt time.Time
@@ -61,18 +63,18 @@ Open questions:
 */
 
 type DocumentRepository interface {
-	CreateDocument(ctx context.Context, userId int32, documentName *string, documentDescription *string) (documentId string, err error)
-	GetDocument(ctx context.Context, documentId string) (document *Document, err error)
-	UpdateDocument(ctx context.Context, documentId string, documentName *string, documentDescription *string) (err error)
-	DeleteDocument(ctx context.Context, documentId string) (err error)
+	CreateDocument(ctx context.Context, userId uuid.UUID, documentName *string, documentDescription *string) (documentId uuid.UUID, err error)
+	GetDocument(ctx context.Context, documentId uuid.UUID) (document *Document, err error)
+	UpdateDocument(ctx context.Context, documentId uuid.UUID, documentName *string, documentDescription *string) (err error)
+	DeleteDocument(ctx context.Context, documentId uuid.UUID) (err error)
 	// list the documents that are associated with that user at those permission levels
-	ListDocumentsByPrincipal(ctx context.Context, principalId string, permissions []Permission, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
-	GetPermissionOfPrincipalOnDocument(ctx context.Context, documentId string, principalId string) (permission Permission, err error)
-	ListPermissionsOnDocument(ctx context.Context, documentId string) (recipientPermissions []RecipientPermission, err error)
-	CreateGuest(ctx context.Context, creatorId string, documentId string, permission Permission) (guestId string, err error)
-	UpsertPermissionsUser(ctx context.Context, userId string, documentId string, permission Permission) (err error)
-	UpdatePermissionGuest(ctx context.Context, guestId string, documentId string, permission Permission) (err error)
-	DeletePermissionsPrincipal(ctx context.Context, recipientId string, documentId string) (err error)
+	ListDocumentsByPrincipal(ctx context.Context, principalId uuid.UUID, permissions []Permission, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
+	GetPermissionOfPrincipalOnDocument(ctx context.Context, documentId uuid.UUID, principalId uuid.UUID) (permission Permission, err error)
+	ListPermissionsOnDocument(ctx context.Context, documentId uuid.UUID) (recipientPermissions []RecipientPermission, err error)
+	CreateGuest(ctx context.Context, creatorId uuid.UUID, documentId uuid.UUID, permission Permission) (guestId uuid.UUID, err error)
+	UpsertPermissionsUser(ctx context.Context, userId uuid.UUID, documentId uuid.UUID, permission Permission) (err error)
+	UpdatePermissionGuest(ctx context.Context, guestId uuid.UUID, documentId uuid.UUID, permission Permission) (err error)
+	DeletePermissionsPrincipal(ctx context.Context, recipientId uuid.UUID, documentId uuid.UUID) (err error)
 }
 
 type DocumentService struct {
@@ -87,10 +89,10 @@ func NewDocumentService(documentRepo DocumentRepository) *DocumentService {
 
 func (ds *DocumentService) CreateDocument(
 	ctx context.Context,
-	ownerUserId int32,
+	ownerUserId uuid.UUID,
 	documentName *string,
 	documentDescription *string,
-) (string, error) {
+) (uuid.UUID, error) {
 	// this is an internal api that will be called by the api gateway layer. We can expect that
 	// 
 	documentId, err := ds.documentRepo.CreateDocument(ctx, ownerUserId, documentName, documentDescription)

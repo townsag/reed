@@ -34,7 +34,7 @@ CREATE TABLE guests (
     description TEXT,
     -- created by holds the user id that created this guest link
     -- only the creator of the link can modify it
-    created_by TEXT NOT NULL,
+    created_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -46,11 +46,11 @@ CREATE TYPE recipient_type AS ENUM ('user', 'guest');
 -- this ensures that all the permissions on a document are on the same machine
 -- still not sure what this means for queries that get permissions by user
 CREATE TABLE permissions (
-    recipient_id TEXT NOT NULL,
+    recipient_id UUID NOT NULL,
     recipient_type recipient_type NOT NULL,
     document_id UUID NOT NULL REFERENCES documents(id),
     permission_level permission_level NOT NULL,
-    created_by TEXT NOT NULL,
+    created_by UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (recipient_id, document_id)

@@ -31,9 +31,13 @@ func NewDocumentRepository(pool *pgxpool.Pool) *DocumentRepository {
 	}
 }
 
-func repositoryToServiceDocument(repoDocument *sqlc.Document) *service.Document {
+func repositoryToServiceDocument(repoDocument *sqlc.Document) (*service.Document, error) {
+	documentId, err := uuid.FromBytes(repoDocument.ID.Bytes[:])
+	if err != nil {
+		return nil, err
+	}
 	serviceDocument := &service.Document{
-		ID: repoDocument.ID.String(),
+		ID: documentId,
 		CreatedAt: repoDocument.CreatedAt.Time,
 		LastModifiedAt: repoDocument.LastModifiedAt.Time,
 	}
@@ -45,7 +49,7 @@ func repositoryToServiceDocument(repoDocument *sqlc.Document) *service.Document 
 		description := repoDocument.Description.String
 		serviceDocument.Description = &description
 	}
-	return serviceDocument
+	return serviceDocument, nil
 }
 
 func serviceToRepoPermission(
@@ -78,14 +82,6 @@ func repoToServicePermission(
 	}
 }
 
-// TODO: write some unit tests for this
-// TODO: this should return an error if the input string does not match the uuid format
-func stringToPgUUID(uuid string) pgtype.UUID {
-	var out [16]byte
-	copy(out[:], uuid)
-	return pgtype.UUID{ Bytes: out, Valid: true }
-}
-
 var conflictErrorCode string = "23505"
 
 // define methods on that struct that implement the document repository interface 
@@ -94,22 +90,22 @@ var conflictErrorCode string = "23505"
 
 func (dr *DocumentRepository) CreateDocument(
 	ctx context.Context,
-	userId int32, 
+	userId uuid.UUID, 
 	documentName *string,
 	documentDescription *string,
-) (documentId string, err error) {
+) (documentId uuid.UUID, err error) {
 	// start a transaction
 	tx, err := dr.pool.Begin(ctx)
 	if err != nil {
-		return "", service.RepoImpl("failed to begin a database transaction", err)
+		return uuid.Nil, service.RepoImpl("failed to begin a database transaction", err)
 	}
 	defer tx.Rollback(ctx)
 	txQueries := dr.queries.WithTx(tx)
 	// generate a uuid for the document
-	uuid := uuid.New()
+	documentId = uuid.New()
 	// create a record in the documents table for the new document
 	params := sqlc.CreateDocumentParams{
-		ID: pgtype.UUID{ Bytes: uuid, Valid: true },
+		ID: pgtype.UUID{ Bytes: documentId, Valid: true },
 	}
 	if documentName != nil {
 		params.Name = pgtype.Text{
@@ -125,92 +121,71 @@ func (dr *DocumentRepository) CreateDocument(
 	}
 	err = txQueries.CreateDocument(ctx, params)
 	if err != nil {
-		return "", service.RepoImpl("unable to create a new document", err)
+		return uuid.Nil, service.RepoImpl("unable to create a new document", err)
 	}
 	// create a record in the permissions table designating the user_id
 	// as the owner of that document
 	paramsPermission := sqlc.UpsertPermissionUserParams{
-		RecipientID: string(userId),
-		DocumentID: pgtype.UUID{ Bytes: uuid, Valid: true },
+		RecipientID: pgtype.UUID{ Bytes: userId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 		PermissionLevel: sqlc.PermissionLevelOwner,
-		CreatedBy: string(userId),
+		CreatedBy: pgtype.UUID{ Bytes: userId, Valid: true },
 	}
 	err = txQueries.UpsertPermissionUser(ctx, paramsPermission)
 	if err != nil {
-		return "", service.RepoImpl("unable to create permissions on new document for user", err)
+		return uuid.Nil, service.RepoImpl("unable to create permissions on new document for user", err)
 	}
 	// return the generated document id
 	err = tx.Commit(ctx)
 	if err != nil {
-		return "", service.RepoImpl(
+		return uuid.Nil, service.RepoImpl(
 			"error encountered when creating document",
 			err,
 		)
 	}
-	return uuid.String(), nil
+	return documentId, nil
 }
 
 func (dr *DocumentRepository) GetDocument(
 	ctx context.Context,
-	documentId string,
+	documentId uuid.UUID,
 ) (document *service.Document, err error) {
-	var documentUuid [16]byte
-	// documentUuid[:] creates a slice that references the entire underlying array
-	// this allows copy to work on the byte array because copy only works on slices
-	copy(documentUuid[:], documentId)
 	repoDocument, err := dr.queries.GetDocument(
 		ctx,
-		pgtype.UUID{ Bytes: documentUuid, Valid: true },
+		pgtype.UUID{ Bytes: documentId, Valid: true },
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, service.NotFound(
-				fmt.Sprintf("no document found with id %s", documentId),
+				fmt.Sprintf("no document found with id %s", documentId.String()),
 				err,
 			)
 		} else {
 			return nil, service.RepoImpl(
-				fmt.Sprintf("error when trying to retrieve document with id: %s", documentId),
+				fmt.Sprintf("error when trying to retrieve document with id: %s", documentId.String()),
 				err,
 			)
 		}
 	}
-	return repositoryToServiceDocument(&repoDocument), nil
+
+	document, err = repositoryToServiceDocument(&repoDocument)
+	if err != nil {
+		return nil, service.RepoImpl("failed to parse the returned document", err)
+	}
+	return document, nil
 }
 
 func (dr *DocumentRepository) UpdateDocument(
 	ctx context.Context,
-	documentId string,
+	documentId uuid.UUID,
 	documentName *string,
 	documentDescription *string,
 ) error {
 	if documentName == nil && documentDescription == nil {
 		return nil
 	}
-	var documentUuid [16]byte
-	copy(documentUuid[:], []byte(documentId))
-	// don't use the generated sqlc code for this one, dynamically construct the
-	// query using sting concatenation then execute the query using the pgxpool 
-	// attribute of the document repository. This may not be the best approach 
-	// but this is a simple way to evaluate the dynamic query building approach
-	// ^didn't like this approach because it is not compile time type checked
-	// arguments := []interface{}{documentId}
-	// argumentIndex := 2
-	// sql := "UPDATE documents SET last_modified_at = NOW()"
-	// if documentName != nil {
-	// 	sql += fmt.Sprintf(", name = $%d", argumentIndex)
-	// 	argumentIndex++
-	// 	arguments = append(arguments, *documentName)
-	// }
-	// if documentDescription != nil {
-	// 	sql += fmt.Sprintf(", description = $%d", argumentIndex)
-	// 	argumentIndex++
-	// 	arguments = append(arguments, *documentDescription)
-	// }
-	// sql += " WHERE id = $1"
-	// dr.pool.Exec(ctx, sql, arguments...)
 	params := sqlc.UpdateDocumentParams{
-		ID: pgtype.UUID{ Bytes: documentUuid, Valid: true },
+		ID: pgtype.UUID{ Bytes: documentId, Valid: true },
 	}
 	if documentName != nil {
 		params.Name = pgtype.Text{ String: *documentName, Valid: true }
@@ -221,13 +196,13 @@ func (dr *DocumentRepository) UpdateDocument(
 	countRows, err := dr.queries.UpdateDocument(ctx, params)
 	if err != nil {
 		return service.RepoImpl(
-			fmt.Sprintf("error encountered when trying to update document with id: %s", documentId),
+			fmt.Sprintf("error encountered when trying to update document with id: %v", documentId.String()),
 			err,
 		)
 	}
 	if countRows < 1 {
 		return service.NotFound(
-			fmt.Sprintf("unable to update the document with id: %s", documentId),
+			fmt.Sprintf("unable to update the document with id: %v", documentId.String()),
 			nil,
 		)
 	}
@@ -243,7 +218,7 @@ func (dr *DocumentRepository) UpdateDocument(
 // decided not to use cascading deletes because of hidden potential for mistakes
 func (dr *DocumentRepository) DeleteDocument(
 	ctx context.Context,
-	documentId string,
+	documentId uuid.UUID,
 ) error {
 	// start a transaction
 	tx, err := dr.pool.Begin(ctx)
@@ -255,25 +230,25 @@ func (dr *DocumentRepository) DeleteDocument(
 	// delete any rows in the permissions table that reference that document
 	// this should use the index on the permissions table using the document column
 	_, err = txQueries.DeletePermissionByDocument(
-		ctx, stringToPgUUID(documentId),
+		ctx, pgtype.UUID{ Bytes: documentId, Valid: true },
 	)
 	if err != nil {
 		return service.RepoImpl(
-			fmt.Sprintf("failed to delete document with id %s", documentId),
+			fmt.Sprintf("failed to delete document with id %s", documentId.String()),
 			err,
 		)
 	}
 	// delete the row from the documents table
-	count, err := txQueries.DeleteDocument(ctx, stringToPgUUID(documentId))
+	count, err := txQueries.DeleteDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
 	if err != nil {
 		return service.RepoImpl(
-			fmt.Sprintf("failed to delete document with id: %s", documentId),
+			fmt.Sprintf("failed to delete document with id: %s", documentId.String()),
 			err,
 		)
 	}
 	if count < 1 {
 		return service.NotFound(
-			fmt.Sprintf("no document found with id: %s", documentId),
+			fmt.Sprintf("no document found with id: %s", documentId.String()),
 			nil,
 		)
 	}
@@ -287,13 +262,29 @@ func (dr *DocumentRepository) DeleteDocument(
 	return nil
 }
 
+// func ReadDocuments(
+	
+// )
+
 func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	ctx context.Context,
-	principalId string, 
+	principalId uuid.UUID, 
 	permissions []service.Permission,
 	cursor *service.Cursor,
 	pageSize int32,
 ) (documentPermissions []service.DocumentPermission, cursorResp *service.Cursor, err error) {
+	/*
+	What does this function do:
+	- parse the user input:
+		- cursor
+		- list of permissions
+	- read from the database based on the contents of the cursor
+	- parse the returned values into a new format
+	- construct a new cursor
+	- return the parsed documents or any errors
+	*/
+
+
 	// determine the query parameters by parsing the cursor object
 	// assume that a default cursor will be constructed on the client side
 	// and we don't need to support the null cursor case
@@ -322,9 +313,9 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	switch cursor.SortField {
 	case service.CreatedAt:
 		params := sqlc.ListDocumentsByCreatedAtParams{
-			RecipientID: principalId,
+			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true },
 			CreatedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: stringToPgUUID(cursor.LastSeenDocument),
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
 			Limit: pageSize,
 			PermissionsList: repoPermissionsList,
 		}
@@ -333,8 +324,16 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 			return nil, nil, service.RepoImpl("failed to retired document by principal", err)
 		}
 		if len(rows) > 0 {
+			returnedDocumentID, err := uuid.FromBytes(rows[len(rows) - 1].Document.ID.Bytes[:])
+			if err != nil {
+				// TODO: log this error
+				// TODO: update this so that it reads the uuid from the already parsed document
+				//		 that way we don't have to parse the uuid twice and it makes the error
+				//		 handling of this section more simple
+				returnedDocumentID = uuid.Nil
+			}
 			cursorResp.LastSeenTime = rows[len(rows) - 1].Document.CreatedAt.Time
-			cursorResp.LastSeenDocument = rows[len(rows) - 1].Document.ID.String()
+			cursorResp.LastSeenDocument = returnedDocumentID
 		} else {
 			cursorResp.LastSeenTime = cursor.LastSeenTime
 			cursorResp.LastSeenDocument = cursor.LastSeenDocument
@@ -343,22 +342,32 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 			permission, err := repoToServicePermission(row.PermissionLevel)
 			if err != nil {
 				// TODO: log the error
-				// skip over the permission value with invalid data
-				continue
+				return nil, nil, service.RepoImpl(
+					fmt.Sprintf(
+						"failed to parse permission for documentId: %s, recipientId: %s", 
+						row.Document.ID.String(), 
+						principalId.String(),
+					),
+					err,
+				)
+			}
+			serviceDocument, err := repositoryToServiceDocument(&row.Document)
+			if err != nil {
+				return nil, nil, service.RepoImpl(fmt.Sprintf("failed to parse document with documentId: %s", row.Document.ID.String()), err)
 			}
 			documentPermissions = append(
 				documentPermissions,
 				service.DocumentPermission{ 
-					Document: *repositoryToServiceDocument(&row.Document), 
+					Document: *serviceDocument, 
 					Permission: permission,
 				},
 			)
 		}
 	case service.LastModifiedAt:
 		params := sqlc.ListDocumentsByLastModifiedAtParams{
-			RecipientID: principalId,
+			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true},
 			LastModifiedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: stringToPgUUID(cursor.LastSeenDocument),
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
 			Limit: pageSize,
 			PermissionsList: repoPermissionsList,
 		}
@@ -367,8 +376,13 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 			return nil, nil, service.RepoImpl("failed to retired document by principal", err)
 		}
 		if len(rows) > 0 {
-			cursorResp.LastSeenTime = rows[len(rows) - 1].Document.LastModifiedAt.Time
-			cursorResp.LastSeenDocument = rows[len(rows) - 1].Document.ID.String()
+			returnedDocumentID, err := uuid.FromBytes(rows[len(rows) - 1].Document.ID.Bytes[:])
+			if err != nil {
+				// TODO: log this error
+				returnedDocumentID = uuid.Nil
+			}
+			cursorResp.LastSeenTime = rows[len(rows) - 1].Document.CreatedAt.Time
+			cursorResp.LastSeenDocument = returnedDocumentID
 		} else {
 			cursorResp.LastSeenTime = cursor.LastSeenTime
 			cursorResp.LastSeenDocument = cursor.LastSeenDocument
@@ -377,13 +391,23 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 			permission, err := repoToServicePermission(row.PermissionLevel)
 			if err != nil {
 				// TODO: log the error
-				// skip over the permission value with invalid data
-				continue
+				return nil, nil, service.RepoImpl(
+					fmt.Sprintf(
+						"failed to parse permission for documentId: %s, recipientId: %s", 
+						row.Document.ID.String(), 
+						principalId.String(),
+					),
+					err,
+				)
+			}
+			serviceDocument, err := repositoryToServiceDocument(&row.Document)
+			if err != nil {
+				return nil, nil, service.RepoImpl(fmt.Sprintf("failed to parse document with documentId: %s", row.Document.ID.String()), err)
 			}
 			documentPermissions = append(
 				documentPermissions,
 				service.DocumentPermission{ 
-					Document: *repositoryToServiceDocument(&row.Document), 
+					Document: *serviceDocument, 
 					Permission: permission,
 				},
 			)
@@ -394,14 +418,14 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 
 func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 	ctx context.Context,
-	documentId string,
-	principalId string,
+	documentId uuid.UUID,
+	principalId uuid.UUID,
 ) (permission service.Permission, err error) {
 	// get the permission of a user or a guest on a document
 	// return a not found error if that principal has no permissions on that document
 	params := sqlc.GetPermissionOfPrincipalOnDocumentParams{
-		DocumentID: stringToPgUUID(documentId),
-		RecipientID: principalId,
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
+		RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true },
 	}
 	row, err := dr.queries.GetPermissionOfPrincipalOnDocument(
 		ctx,
@@ -411,12 +435,20 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 		// check for no rows found
 		if errors.Is(err, pgx.ErrNoRows) {
 			return -1, service.NotFound(
-				fmt.Sprintf("no permissions found for principal: %s on document: %s", principalId, documentId),
+				fmt.Sprintf(
+					"no permissions found for principal: %s on document: %s",
+					principalId.String(),
+					documentId.String(),
+				),
 				err,
 			)
 		} else {
 			return -1, service.RepoImpl(
-				fmt.Sprintf("failed to get permission for principal: %s on document: %s", principalId, documentId),
+				fmt.Sprintf(
+					"failed to get permission for principal: %s on document: %s",
+					principalId.String(),
+					documentId.String(),
+				),
 				err,
 			)
 		}
@@ -428,18 +460,19 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 	return permission, nil
 }
 
+// TODO: this function should be paginated using a cursor
 func (dr *DocumentRepository) ListPermissionsOnDocument(
 	ctx context.Context,
-	documentId string,
+	documentId uuid.UUID,
 ) (recipientPermissions []service.RecipientPermission, err error) {
 	// get the recipient permission rows from the database
 	repoRecipientPermissions, err := dr.queries.ListPermissionsOnDocument(
-		ctx, stringToPgUUID(documentId),
+		ctx, pgtype.UUID{ Bytes: documentId, Valid: true},
 	)
 	// return errors if necessary
 	if err != nil {
 		return nil, service.RepoImpl(
-			fmt.Sprintf("failed to read permissions on document: %s", documentId),
+			fmt.Sprintf("failed to read permissions on document: %s", documentId.String()),
 			err,
 		)	
 	}
@@ -449,10 +482,30 @@ func (dr *DocumentRepository) ListPermissionsOnDocument(
 		servicePermission, err := repoToServicePermission(elem.PermissionLevel)
 		if err != nil {
 			// TODO: log the error
-			continue
+			// no partial failures, we should always fail when one of the elements in a list is invalid
+			// this makes failures visible to the calling code
+			return nil, service.RepoImpl(
+				fmt.Sprintf(
+					"failed to parse the permission stored in the database for document: %s, principal: %s", 
+					documentId.String(),
+					elem.RecipientID.String(),
+				),
+				err,
+			)
+		}
+		recipientId, err := uuid.FromBytes(elem.RecipientID.Bytes[:])
+		if err != nil {
+			// TODO: log the error
+			return nil, service.RepoImpl(
+				fmt.Sprintf(
+					"failed to parse the recipient id returned by the database: %s",
+					elem.RecipientID.String(),
+				),
+				err,
+			)
 		}
 		recipientPermissions[i] = service.RecipientPermission{
-			RecipientId: elem.RecipientID,
+			RecipientId: recipientId,
 			Permission: servicePermission,
 			CreatedAt: elem.CreatedAt.Time,
 			LastModifiedAt: elem.LastModifiedAt.Time,
@@ -463,15 +516,15 @@ func (dr *DocumentRepository) ListPermissionsOnDocument(
 
 func (dr *DocumentRepository) CreateGuest(
 	ctx context.Context, 
-	creatorId string,
-	documentId string,
+	creatorId uuid.UUID,
+	documentId uuid.UUID,
 	permission service.Permission,
-) (guestId string, err error) {
+) (guestId uuid.UUID, err error) {
 	// generate a new uuid for the guest
-	uuid := uuid.New()
+	guestId = uuid.New()
 	repoPermission, err := serviceToRepoPermission(permission)
 	if err != nil {
-		return "", service.InvalidInput(
+		return uuid.Nil, service.InvalidInput(
 			fmt.Sprintf("invalid input for permission: %v", permission),
 			err,
 		)
@@ -479,67 +532,71 @@ func (dr *DocumentRepository) CreateGuest(
 	// get a transaction
 	tx, err := dr.pool.Begin(ctx)
 	if err != nil {
-		return "", service.RepoImpl("failed to create a transaction when creating a guest", err)
+		return uuid.Nil, service.RepoImpl("failed to create a transaction when creating a guest", err)
 	}
 	defer tx.Rollback(ctx)
 	txQueries := dr.queries.WithTx(tx)
 	// add a new guest to the guests table
 	params := sqlc.CreateGuestParams{
-		ID: stringToPgUUID(uuid.String()),
-		DocumentID: stringToPgUUID(documentId),
-		CreatedBy: creatorId,
+		ID: pgtype.UUID{ Bytes: guestId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
+		CreatedBy: pgtype.UUID{ Bytes: creatorId, Valid: true },
 	}
 	err = txQueries.CreateGuest(ctx, params)
 	if err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) {
 			if pgError.Code == conflictErrorCode {
-				return "", service.UniqueConflict(
-					fmt.Sprintf("unique conflict encountered when creating guest with id: %s", uuid.String()),
+				return uuid.Nil, service.UniqueConflict(
+					fmt.Sprintf("unique conflict encountered when creating guest with id: %s", guestId.String()),
 					err,
 				)
 			} else {
-				return "", service.RepoImpl("encountered a postgres error when trying to create a user", err)
+				return uuid.Nil, service.RepoImpl("encountered a postgres error when trying to create a user", err)
 			}
 		} else {
-			return "", service.RepoImpl("encountered an unexpected error when creating a user", err)
+			return uuid.Nil, service.RepoImpl("encountered an unexpected error when creating a user", err)
 		}
 	}
 	// add a new permission record to the permissions table associated with that guest
 	paramsPermission := sqlc.InsertPermissionGuestParams{
-		RecipientID: uuid.String(),
-		DocumentID: stringToPgUUID(documentId),
+		RecipientID: pgtype.UUID{ Bytes: guestId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 		PermissionLevel: repoPermission,
-		CreatedBy: creatorId,
+		CreatedBy: pgtype.UUID{ Bytes: creatorId, Valid: true },
 	}
 	err = txQueries.InsertPermissionGuest(ctx, paramsPermission)
 	if err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) {
 			if pgError.Code == conflictErrorCode {
-				return "", service.UniqueConflict(
-					fmt.Sprintf("unique conflict encountered when creating permission on document: %s, for guest with id: %s", documentId, uuid.String()),
+				return uuid.Nil, service.UniqueConflict(
+					fmt.Sprintf(
+						"unique conflict encountered when creating permission on document: %s, for guest with id: %s",
+						documentId.String(),
+						guestId.String(),
+					),
 					err,
 				)
 			} else {
-				return "", service.RepoImpl("encountered a postgres error when trying to create a permission", err)
+				return uuid.Nil, service.RepoImpl("encountered a postgres error when trying to create a permission", err)
 			}
 		} else {
-			return "", service.RepoImpl("encountered an unexpected error when creating a permission", err)
+			return uuid.Nil, service.RepoImpl("encountered an unexpected error when creating a permission", err)
 		}
 	}
 	// commit the transaction
 	err = tx.Commit(ctx)
 	if err != nil {
-		return "", service.RepoImpl("failed to commit transaction", err)
+		return uuid.Nil, service.RepoImpl("failed to commit transaction", err)
 	}
-	return uuid.String(), nil
+	return guestId, nil
 }
 
 func (dr *DocumentRepository) UpsertPermissionsUser(
 	ctx context.Context, 
-	userId string, 
-	documentId string, 
+	userId uuid.UUID, 
+	documentId uuid.UUID, 
 	permission service.Permission,
 ) (err error) {
 	repoPermission, err := serviceToRepoPermission(permission)
@@ -550,10 +607,10 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 		)
 	}
 	params := sqlc.UpsertPermissionUserParams{
-		RecipientID: userId,
-		DocumentID: stringToPgUUID(documentId),
+		RecipientID: pgtype.UUID{ Bytes: userId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 		PermissionLevel: repoPermission,
-		CreatedBy: userId,
+		CreatedBy: pgtype.UUID{ Bytes: userId, Valid: true },
 	}
 	err = dr.queries.UpsertPermissionUser(ctx, params)
 	if err != nil {
@@ -564,8 +621,8 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 
 func (dr *DocumentRepository) UpdatePermissionGuest(
 	ctx context.Context,
-	guestId string,
-	documentId string,
+	guestId uuid.UUID,
+	documentId uuid.UUID,
 	permission service.Permission,
 ) (err error) {
 	permissionRepo, err := serviceToRepoPermission(permission)
@@ -576,8 +633,8 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 		)
 	}
 	params := sqlc.UpdatePermissionGuestParams{
-		RecipientID: guestId,
-		DocumentID: stringToPgUUID(documentId),
+		RecipientID: pgtype.UUID{ Bytes: guestId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 		PermissionLevel: permissionRepo,
 	}
 	count, err := dr.queries.UpdatePermissionGuest(ctx, params)
@@ -586,7 +643,11 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 	}
 	if count < 1 {
 		return service.NotFound(
-			fmt.Sprintf("unable to find permission of guest: %s on document: %s", guestId, documentId),
+			fmt.Sprintf(
+				"unable to find permission of guest: %s on document: %s",
+				guestId.String(),
+				documentId.String(),
+			),
 			nil,
 		)
 	}
@@ -595,26 +656,34 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 
 func (dr *DocumentRepository) DeletePermissionsPrincipal(
 	ctx context.Context,
-	recipientId string,
-	documentId string,
+	recipientId uuid.UUID,
+	documentId uuid.UUID,
 ) (err error) {
 	// let the code at the service level decide if we should be able to delete the owner of 
 	// a documents permissions on that document. This business logic does not need to be
 	// enforced in two places
 	params := sqlc.DeletePermissionPrincipalParams{
-		RecipientID: recipientId,
-		DocumentID: stringToPgUUID(documentId),
+		RecipientID: pgtype.UUID{ Bytes: recipientId, Valid: true },
+		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 	}
 	count, err := dr.queries.DeletePermissionPrincipal(ctx, params)
 	if err != nil {
 		return service.RepoImpl(
-			fmt.Sprintf("error encountered when deleting permissions of %s on document %s", recipientId, documentId),
+			fmt.Sprintf(
+				"error encountered when deleting permissions of %s on document %s",
+				recipientId.String(),
+				documentId.String(),
+			),
 			err,
 		)
 	}
 	if count < 1 {
 		return service.NotFound(
-			fmt.Sprintf("no permission found when deleting permission with recipient: %s and document %s", recipientId, documentId),
+			fmt.Sprintf(
+				"no permission found when deleting permission with recipient: %s and document %s",
+				recipientId.String(),
+				documentId.String(),
+			),
 			nil,
 		)
 	}

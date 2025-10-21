@@ -51,6 +51,14 @@ type RecipientPermission struct {
 	LastModifiedAt time.Time
 }
 
+func MaxDocumentID() uuid.UUID {
+    var maxUUID uuid.UUID
+    for i := range maxUUID {
+        maxUUID[i] = 0xff
+    }
+    return maxUUID
+}
+
 /*
 Open questions:
 - should the calling code or the repository be in charge of generating

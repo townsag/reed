@@ -238,6 +238,16 @@ func (dr *DocumentRepository) DeleteDocument(
 			err,
 		)
 	}
+	// delete any guests from the guests table that are linked to that document
+	_, err = txQueries.DeleteGuestsByDocument(
+		ctx, pgtype.UUID{ Bytes: documentId, Valid: true },
+	)
+	if err != nil {
+		return service.RepoImpl(
+			fmt.Sprintf("failed to delete guests with document id: %s", documentId.String()),
+			err,
+		)
+	}
 	// delete the row from the documents table
 	count, err := txQueries.DeleteDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
 	if err != nil {
@@ -262,10 +272,101 @@ func (dr *DocumentRepository) DeleteDocument(
 	return nil
 }
 
-// func ReadDocuments(
-	
-// )
+func parseDocumentPermission(
+	document sqlc.Document,
+	permissionLevel sqlc.PermissionLevel,
+) (*service.DocumentPermission, error) {
+	permission, err := repoToServicePermission(permissionLevel)
+	if err != nil {
+		// TODO: log the error
+		return nil, service.RepoImpl(
+			fmt.Sprintf(
+				"failed to parse permission for documentId: %s", 
+				document.ID.String(), 
+			),
+			err,
+		)
+	}
+	serviceDocument, err := repositoryToServiceDocument(&document)
+	if err != nil {
+		return nil, service.RepoImpl(
+			fmt.Sprintf(
+				"failed to parse document with documentId: %s", document.ID.String(),
+			),
+			err,
+		)
+	}
+	return &service.DocumentPermission{
+		Document: *serviceDocument,
+		Permission: permission,
+	}, nil
+}
 
+func (dr *DocumentRepository) readDocuments(
+	ctx context.Context,
+	principalId uuid.UUID, 
+	repoPermissionList []sqlc.PermissionLevel,
+	cursor *service.Cursor,
+	pageSize int32,
+) (
+	documentPermissionList []service.DocumentPermission,
+	err error,
+) {
+	switch cursor.SortField {
+	case service.CreatedAt:
+		params := sqlc.ListDocumentsByCreatedAtParams{
+			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true },
+			CreatedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
+			Limit: pageSize,
+			PermissionsList: repoPermissionList,
+		}
+		rows, err := dr.queries.ListDocumentsByCreatedAt(ctx, params)
+		if err != nil {
+			return nil, service.RepoImpl("failed to retrieve document by principal", err)
+		}
+		for _, row := range rows {
+			documentPermission, err := parseDocumentPermission(row.Document, row.PermissionLevel)
+			if err != nil {
+				return nil, err
+			} else {
+				documentPermissionList = append(documentPermissionList, *documentPermission)
+			}
+		}
+	case service.LastModifiedAt:
+		params := sqlc.ListDocumentsByLastModifiedAtParams{
+			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true},
+			LastModifiedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
+			Limit: pageSize,
+			PermissionsList: repoPermissionList,
+		}
+		rows, err := dr.queries.ListDocumentsByLastModifiedAt(ctx, params)
+		if err != nil {
+			return nil, service.RepoImpl("failed to retrieve document by principal", err)
+		}
+		for _, row := range rows {
+			documentPermission, err := parseDocumentPermission(row.Document, row.PermissionLevel)
+			if err != nil {
+				return nil, err
+			} else {
+				documentPermissionList = append(documentPermissionList, *documentPermission)
+			}
+		}
+	}
+	return documentPermissionList, nil
+}
+
+/*
+What does this function do:
+- parse the user input:
+	- cursor
+	- list of permissions
+- read from the database based on the contents of the cursor
+- parse the returned values into a new format
+- construct a new cursor
+- return the parsed documents or any errors
+*/
 func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	ctx context.Context,
 	principalId uuid.UUID, 
@@ -273,18 +374,6 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	cursor *service.Cursor,
 	pageSize int32,
 ) (documentPermissions []service.DocumentPermission, cursorResp *service.Cursor, err error) {
-	/*
-	What does this function do:
-	- parse the user input:
-		- cursor
-		- list of permissions
-	- read from the database based on the contents of the cursor
-	- parse the returned values into a new format
-	- construct a new cursor
-	- return the parsed documents or any errors
-	*/
-
-
 	// determine the query parameters by parsing the cursor object
 	// assume that a default cursor will be constructed on the client side
 	// and we don't need to support the null cursor case
@@ -306,113 +395,27 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 		}
 		repoPermissionsList = append(repoPermissionsList, repoPermission)
 	}
-	documentPermissions = make([]service.DocumentPermission, 0)
 	cursorResp = &service.Cursor{
 		SortField: cursor.SortField,
 	}
-	switch cursor.SortField {
-	case service.CreatedAt:
-		params := sqlc.ListDocumentsByCreatedAtParams{
-			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true },
-			CreatedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
-			Limit: pageSize,
-			PermissionsList: repoPermissionsList,
-		}
-		rows, err := dr.queries.ListDocumentsByCreatedAt(ctx, params)
-		if err != nil {
-			return nil, nil, service.RepoImpl("failed to retired document by principal", err)
-		}
-		if len(rows) > 0 {
-			returnedDocumentID, err := uuid.FromBytes(rows[len(rows) - 1].Document.ID.Bytes[:])
-			if err != nil {
-				// TODO: log this error
-				// TODO: update this so that it reads the uuid from the already parsed document
-				//		 that way we don't have to parse the uuid twice and it makes the error
-				//		 handling of this section more simple
-				returnedDocumentID = uuid.Nil
-			}
-			cursorResp.LastSeenTime = rows[len(rows) - 1].Document.CreatedAt.Time
-			cursorResp.LastSeenDocument = returnedDocumentID
-		} else {
-			cursorResp.LastSeenTime = cursor.LastSeenTime
-			cursorResp.LastSeenDocument = cursor.LastSeenDocument
-		}
-		for _, row := range rows {
-			permission, err := repoToServicePermission(row.PermissionLevel)
-			if err != nil {
-				// TODO: log the error
-				return nil, nil, service.RepoImpl(
-					fmt.Sprintf(
-						"failed to parse permission for documentId: %s, recipientId: %s", 
-						row.Document.ID.String(), 
-						principalId.String(),
-					),
-					err,
-				)
-			}
-			serviceDocument, err := repositoryToServiceDocument(&row.Document)
-			if err != nil {
-				return nil, nil, service.RepoImpl(fmt.Sprintf("failed to parse document with documentId: %s", row.Document.ID.String()), err)
-			}
-			documentPermissions = append(
-				documentPermissions,
-				service.DocumentPermission{ 
-					Document: *serviceDocument, 
-					Permission: permission,
-				},
-			)
-		}
-	case service.LastModifiedAt:
-		params := sqlc.ListDocumentsByLastModifiedAtParams{
-			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true},
-			LastModifiedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
-			Limit: pageSize,
-			PermissionsList: repoPermissionsList,
-		}
-		rows, err := dr.queries.ListDocumentsByLastModifiedAt(ctx, params)
-		if err != nil {
-			return nil, nil, service.RepoImpl("failed to retired document by principal", err)
-		}
-		if len(rows) > 0 {
-			returnedDocumentID, err := uuid.FromBytes(rows[len(rows) - 1].Document.ID.Bytes[:])
-			if err != nil {
-				// TODO: log this error
-				returnedDocumentID = uuid.Nil
-			}
-			cursorResp.LastSeenTime = rows[len(rows) - 1].Document.CreatedAt.Time
-			cursorResp.LastSeenDocument = returnedDocumentID
-		} else {
-			cursorResp.LastSeenTime = cursor.LastSeenTime
-			cursorResp.LastSeenDocument = cursor.LastSeenDocument
-		}
-		for _, row := range rows {
-			permission, err := repoToServicePermission(row.PermissionLevel)
-			if err != nil {
-				// TODO: log the error
-				return nil, nil, service.RepoImpl(
-					fmt.Sprintf(
-						"failed to parse permission for documentId: %s, recipientId: %s", 
-						row.Document.ID.String(), 
-						principalId.String(),
-					),
-					err,
-				)
-			}
-			serviceDocument, err := repositoryToServiceDocument(&row.Document)
-			if err != nil {
-				return nil, nil, service.RepoImpl(fmt.Sprintf("failed to parse document with documentId: %s", row.Document.ID.String()), err)
-			}
-			documentPermissions = append(
-				documentPermissions,
-				service.DocumentPermission{ 
-					Document: *serviceDocument, 
-					Permission: permission,
-				},
-			)
-		}
+	// read from the database
+	documentPermissions, err = dr.readDocuments(ctx, principalId, repoPermissionsList, cursor, pageSize)
+	if err != nil {
+		return nil, nil, err
 	}
+	// populate the new
+	if len(documentPermissions) > 0 {
+		if cursorResp.SortField == service.CreatedAt {
+			cursorResp.LastSeenTime = documentPermissions[len(documentPermissions) - 1].Document.CreatedAt
+		} else {
+			cursorResp.LastSeenTime = documentPermissions[len(documentPermissions) - 1].Document.LastModifiedAt
+		}
+		cursorResp.LastSeenDocument = documentPermissions[len(documentPermissions) - 1].Document.ID
+	} else {
+		cursorResp.LastSeenTime = cursor.LastSeenTime
+		cursorResp.LastSeenDocument = cursor.LastSeenDocument
+	}
+
 	return documentPermissions, cursorResp, nil
 }
 

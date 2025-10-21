@@ -238,6 +238,16 @@ func (dr *DocumentRepository) DeleteDocument(
 			err,
 		)
 	}
+	// delete any guests from the guests table that are linked to that document
+	_, err = txQueries.DeleteGuestsByDocument(
+		ctx, pgtype.UUID{ Bytes: documentId, Valid: true },
+	)
+	if err != nil {
+		return service.RepoImpl(
+			fmt.Sprintf("failed to delete guests with document id: %s", documentId.String()),
+			err,
+		)
+	}
 	// delete the row from the documents table
 	count, err := txQueries.DeleteDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
 	if err != nil {

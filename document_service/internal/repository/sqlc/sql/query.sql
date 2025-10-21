@@ -91,3 +91,7 @@ INSERT INTO guests (
 DELETE FROM permissions 
 WHERE recipient_id = $1
 AND document_id = $2;
+
+-- name: DeleteGuestsByDocument :execrows
+DELETE FROM guests
+WHERE document_id = $1;

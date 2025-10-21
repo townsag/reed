@@ -12,6 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/townsag/reed/document_service/internal/repository"
+	"github.com/townsag/reed/document_service/internal/repository/sqlc"
 )
 
 
@@ -46,7 +47,7 @@ func setupPostgresContainer() (*pgxpool.Pool, error) {
 			pgContainer, pgErr = postgres.Run(
 				ctx,
 				"postgres:17-alpine",
-				postgres.WithInitScripts(filepath.Join(".", "sqlc", "sql", "schema.sql")),
+				postgres.WithInitScripts(filepath.Join("..", "sqlc", "sql", "schema.sql")),
 				postgres.WithDatabase("testing"),
 				postgres.WithUsername("testing"),
 				postgres.WithPassword("testing"),
@@ -63,7 +64,16 @@ func setupPostgresContainer() (*pgxpool.Pool, error) {
 				pgErr = fmt.Errorf("unable to connect to postgres container: %w", pgErr)
 				return
 			}
-			testPool, pgErr = pgxpool.New(ctx, dbURL)
+			// use new with config so that we can register types when connecting
+			// to the database 
+			var config *pgxpool.Config
+			config, pgErr = pgxpool.ParseConfig(dbURL)
+			if pgErr != nil {
+				pgErr = fmt.Errorf("failed to parse connection string: %w", pgErr)
+				return
+			}
+			config.AfterConnect = sqlc.RegisterTypes
+			testPool, pgErr = pgxpool.NewWithConfig(ctx, config)
 			if pgErr != nil {
 				pgErr = fmt.Errorf("unable to create a connection pool: %w", pgErr)
 				return

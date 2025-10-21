@@ -16,7 +16,7 @@ service DocumentService {
     rpc GetPermissionsOfPrincipalOnDocument(GetPermissionsRequest) returns (GetPermissionsReply) {}
     // this is meant to be a more expensive rpc for showing information to the user and not authentication
     rpc ListPermissionsOnDocument(ListPermissionsOnDocumentRequest) returns (ListPermissionsOnDocumentReply) {}
-    
+
     rpc CreateGuest(CreateGuestRequest) returns (CreateGuestReply) {}
     rpc UpsertPermissionUser(UpsertPermissionUserRequest) returns (google.protobuf.Empty) {}
     rpc UpdatePermissionGuest(UpdatePermissionGuestRequest) returns (google.protobuf.Empty) {}
@@ -120,6 +120,8 @@ message GetPermissionsReply {
     Permission permission = 1;
 }
 
+// TODO: this request message pair should have cursor information because
+// the number of permissions on a document is unbounded
 message ListPermissionsOnDocumentRequest {
     string document_id = 1;
 }

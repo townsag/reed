@@ -12,11 +12,17 @@ import (
 //		 but use strings in the database and when returning to the caller.
 //		 this balances the simplicity of using integers with the readability
 //		 of using strings
-type Permission int32
+type PermissionLevel int32
 const (
-	Viewer Permission = iota
+	Viewer PermissionLevel = iota
 	Editor 
 	Owner
+)
+
+type RecipientType int32
+const (
+	User RecipientType = iota
+	Guest
 )
 
 type SortField int32
@@ -33,6 +39,16 @@ type Document struct {
 	LastModifiedAt time.Time
 }
 
+type Permission struct {
+	RecipientID uuid.UUID
+	RecipientType RecipientType
+	DocumentID uuid.UUID
+	PermissionLevel PermissionLevel
+	CreatedBy uuid.UUID
+	CreatedAt time.Time
+	LastModifiedAt time.Time
+}
+
 type Cursor struct {
 	SortField SortField
 	LastSeenTime time.Time
@@ -41,14 +57,7 @@ type Cursor struct {
 
 type DocumentPermission struct {
 	Document Document
-	Permission Permission
-}
-
-type RecipientPermission struct {
-	RecipientId uuid.UUID
-	Permission Permission
-	CreatedAt time.Time
-	LastModifiedAt time.Time
+	Permission PermissionLevel
 }
 
 func MaxDocumentID() uuid.UUID {
@@ -76,12 +85,12 @@ type DocumentRepository interface {
 	UpdateDocument(ctx context.Context, documentId uuid.UUID, documentName *string, documentDescription *string) (err error)
 	DeleteDocument(ctx context.Context, documentId uuid.UUID) (err error)
 	// list the documents that are associated with that user at those permission levels
-	ListDocumentsByPrincipal(ctx context.Context, principalId uuid.UUID, permissions []Permission, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
+	ListDocumentsByPrincipal(ctx context.Context, principalId uuid.UUID, permissions []PermissionLevel, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
 	GetPermissionOfPrincipalOnDocument(ctx context.Context, documentId uuid.UUID, principalId uuid.UUID) (permission Permission, err error)
-	ListPermissionsOnDocument(ctx context.Context, documentId uuid.UUID) (recipientPermissions []RecipientPermission, err error)
-	CreateGuest(ctx context.Context, creatorId uuid.UUID, documentId uuid.UUID, permission Permission) (guestId uuid.UUID, err error)
-	UpsertPermissionsUser(ctx context.Context, userId uuid.UUID, documentId uuid.UUID, permission Permission) (err error)
-	UpdatePermissionGuest(ctx context.Context, guestId uuid.UUID, documentId uuid.UUID, permission Permission) (err error)
+	ListPermissionsOnDocument(ctx context.Context, documentId uuid.UUID) (recipientPermissions []Permission, err error)
+	CreateGuest(ctx context.Context, creatorId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (guestId uuid.UUID, err error)
+	UpsertPermissionsUser(ctx context.Context, userId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (err error)
+	UpdatePermissionGuest(ctx context.Context, guestId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (err error)
 	DeletePermissionsPrincipal(ctx context.Context, recipientId uuid.UUID, documentId uuid.UUID) (err error)
 }
 

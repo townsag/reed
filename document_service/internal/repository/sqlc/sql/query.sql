@@ -44,13 +44,11 @@ ORDER BY documents.last_modified_at DESC, documents.id DESC
 LIMIT $4;
 
 -- name: GetPermissionOfPrincipalOnDocument :one
-SELECT permission_level, created_by, created_at, last_modified_at
-FROM permissions 
+SELECT * FROM permissions 
 WHERE document_id = $1 AND recipient_id = $2;
 
 -- name: ListPermissionsOnDocument :many
-SELECT recipient_id, recipient_type, permission_level, created_by, created_at, last_modified_at
-FROM permissions
+SELECT * FROM permissions
 WHERE document_id = $1;
 
 -- name: UpsertPermissionUser :exec

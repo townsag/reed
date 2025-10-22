@@ -23,6 +23,14 @@ type DocumentRepository struct {
 	pool *pgxpool.Pool
 }
 
+// validate at compile time that the repository.DocumentRepository struct conforms to the 
+// service.DocumentRepository interface
+var _ service.DocumentRepository = (*DocumentRepository)(nil)
+// ^this is a type conversion of the format (type)(value)
+// we are assigning a nil pointer as a pointer to a repository.DocumentRepository
+// variable. This checks at runtime if the repository.DocumentRepository struct type 
+// implements the methods in the document repository interface
+
 // define a factory method for that struct
 func NewDocumentRepository(pool *pgxpool.Pool) *DocumentRepository {
 	return &DocumentRepository{
@@ -52,8 +60,8 @@ func repositoryToServiceDocument(repoDocument *sqlc.Document) (*service.Document
 	return serviceDocument, nil
 }
 
-func serviceToRepoPermission(
-	permissionService service.Permission,
+func serviceToRepoPermissionLevel(
+	permissionService service.PermissionLevel,
 ) (sqlc.PermissionLevel, error) {
 	switch permissionService {
 	case service.Viewer:
@@ -67,9 +75,9 @@ func serviceToRepoPermission(
 	}
 }
 
-func repoToServicePermission(
+func repoToServicePermissionLevel(
 	permissionRepo sqlc.PermissionLevel,
-) (service.Permission, error) {
+) (service.PermissionLevel, error) {
 	switch permissionRepo {
 	case sqlc.PermissionLevelViewer:
 		return service.Viewer, nil
@@ -79,6 +87,53 @@ func repoToServicePermission(
 		return service.Owner, nil
 	default:
 		return -1, fmt.Errorf("failed to match any of the valid permissions")
+	}
+}
+
+func repoToServicePermission(
+	permissionRepo sqlc.Permission,
+) (service.Permission, error) {
+	permissionLevel, err := repoToServicePermissionLevel(permissionRepo.PermissionLevel)
+	if err != nil {
+		return service.Permission{}, service.RepoImpl("failed to parse permission level", err)
+	}
+	serviceRecipientType, err := repoToServiceRecipientType(permissionRepo.RecipientType)
+	if err != nil {
+		return service.Permission{}, service.RepoImpl("failed to parse recipient type", err)
+	}
+	recipientId, err := uuid.FromBytes(permissionRepo.RecipientID.Bytes[:])
+	if err != nil {
+		return service.Permission{}, service.RepoImpl("failed to parse the recipient id", err)
+	}
+	documentId, err := uuid.FromBytes(permissionRepo.DocumentID.Bytes[:])
+	if err != nil {
+		return service.Permission{}, service.RepoImpl("failed to parse the document id", err)
+	}
+	creatorId, err := uuid.FromBytes(permissionRepo.CreatedBy.Bytes[:])
+	if err != nil {
+		return service.Permission{}, service.RepoImpl("failed to parse created by id", err)
+	}
+	return service.Permission{
+		RecipientID: recipientId,
+		RecipientType: serviceRecipientType,
+		DocumentID: documentId,
+		PermissionLevel: permissionLevel,
+		CreatedBy: creatorId,
+		CreatedAt: permissionRepo.CreatedAt.Time,
+		LastModifiedAt: permissionRepo.CreatedAt.Time,
+	}, nil
+}
+
+func repoToServiceRecipientType(
+	recipientTypeRepo sqlc.RecipientType,
+) (service.RecipientType, error) {
+	switch recipientTypeRepo {
+	case sqlc.RecipientTypeUser:
+		return service.User, nil
+	case sqlc.RecipientTypeGuest:
+		return service.Guest, nil
+	default:
+		return -1, fmt.Errorf("failed to match any of the valid recipient types")
 	}
 }
 
@@ -276,7 +331,7 @@ func parseDocumentPermission(
 	document sqlc.Document,
 	permissionLevel sqlc.PermissionLevel,
 ) (*service.DocumentPermission, error) {
-	permission, err := repoToServicePermission(permissionLevel)
+	permissionLevelService, err := repoToServicePermissionLevel(permissionLevel)
 	if err != nil {
 		// TODO: log the error
 		return nil, service.RepoImpl(
@@ -298,7 +353,7 @@ func parseDocumentPermission(
 	}
 	return &service.DocumentPermission{
 		Document: *serviceDocument,
-		Permission: permission,
+		Permission: permissionLevelService,
 	}, nil
 }
 
@@ -370,7 +425,7 @@ What does this function do:
 func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	ctx context.Context,
 	principalId uuid.UUID, 
-	permissions []service.Permission,
+	permissions []service.PermissionLevel,
 	cursor *service.Cursor,
 	pageSize int32,
 ) (documentPermissions []service.DocumentPermission, cursorResp *service.Cursor, err error) {
@@ -386,14 +441,14 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 		return nil, nil, service.InvalidInput("expected at least one permission", nil)
 	}
 	repoPermissionsList := make([]sqlc.PermissionLevel, 0)
-	for _, permission := range permissions {
-		repoPermission, err := serviceToRepoPermission(permission)
+	for _, permissionLevel := range permissions {
+		repoPermissionLevel, err := serviceToRepoPermissionLevel(permissionLevel)
 		if err != nil {
 			return nil, nil, service.InvalidInput(
-				fmt.Sprintf("input permission: %v does not map to any valid permissions", permission), nil,
+				fmt.Sprintf("input permission: %v does not map to any valid permissions", permissionLevel), nil,
 			)
 		}
-		repoPermissionsList = append(repoPermissionsList, repoPermission)
+		repoPermissionsList = append(repoPermissionsList, repoPermissionLevel)
 	}
 	cursorResp = &service.Cursor{
 		SortField: cursor.SortField,
@@ -437,7 +492,7 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 	if err != nil {
 		// check for no rows found
 		if errors.Is(err, pgx.ErrNoRows) {
-			return -1, service.NotFound(
+			return service.Permission{}, service.NotFound(
 				fmt.Sprintf(
 					"no permissions found for principal: %s on document: %s",
 					principalId.String(),
@@ -446,7 +501,7 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 				err,
 			)
 		} else {
-			return -1, service.RepoImpl(
+			return service.Permission{}, service.RepoImpl(
 				fmt.Sprintf(
 					"failed to get permission for principal: %s on document: %s",
 					principalId.String(),
@@ -456,20 +511,16 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 			)
 		}
 	}
-	permission, err = repoToServicePermission(row.PermissionLevel)
-	if err != nil {
-		return -1, service.RepoImpl("failed to parse permission level", err)
-	}
-	return permission, nil
+	return repoToServicePermission(row)
 }
 
 // TODO: this function should be paginated using a cursor
 func (dr *DocumentRepository) ListPermissionsOnDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
-) (recipientPermissions []service.RecipientPermission, err error) {
+) (permissions []service.Permission, err error) {
 	// get the recipient permission rows from the database
-	repoRecipientPermissions, err := dr.queries.ListPermissionsOnDocument(
+	repoPermissions, err := dr.queries.ListPermissionsOnDocument(
 		ctx, pgtype.UUID{ Bytes: documentId, Valid: true},
 	)
 	// return errors if necessary
@@ -480,55 +531,29 @@ func (dr *DocumentRepository) ListPermissionsOnDocument(
 		)	
 	}
 	// reformat them from repo to service format
-	recipientPermissions = make([]service.RecipientPermission, len(recipientPermissions))
-	for i, elem := range repoRecipientPermissions {
-		servicePermission, err := repoToServicePermission(elem.PermissionLevel)
+	permissions = make([]service.Permission, len(repoPermissions))
+	for i, elem := range repoPermissions {
+		servicePermission, err := repoToServicePermission(elem)
 		if err != nil {
-			// TODO: log the error
-			// no partial failures, we should always fail when one of the elements in a list is invalid
-			// this makes failures visible to the calling code
-			return nil, service.RepoImpl(
-				fmt.Sprintf(
-					"failed to parse the permission stored in the database for document: %s, principal: %s", 
-					documentId.String(),
-					elem.RecipientID.String(),
-				),
-				err,
-			)
+			return nil, err
 		}
-		recipientId, err := uuid.FromBytes(elem.RecipientID.Bytes[:])
-		if err != nil {
-			// TODO: log the error
-			return nil, service.RepoImpl(
-				fmt.Sprintf(
-					"failed to parse the recipient id returned by the database: %s",
-					elem.RecipientID.String(),
-				),
-				err,
-			)
-		}
-		recipientPermissions[i] = service.RecipientPermission{
-			RecipientId: recipientId,
-			Permission: servicePermission,
-			CreatedAt: elem.CreatedAt.Time,
-			LastModifiedAt: elem.LastModifiedAt.Time,
-		}
+		permissions[i] = servicePermission
 	}
-	return recipientPermissions, nil
+	return permissions, nil
 }
 
 func (dr *DocumentRepository) CreateGuest(
 	ctx context.Context, 
 	creatorId uuid.UUID,
 	documentId uuid.UUID,
-	permission service.Permission,
+	permissionLevel service.PermissionLevel,
 ) (guestId uuid.UUID, err error) {
 	// generate a new uuid for the guest
 	guestId = uuid.New()
-	repoPermission, err := serviceToRepoPermission(permission)
+	repoPermission, err := serviceToRepoPermissionLevel(permissionLevel)
 	if err != nil {
 		return uuid.Nil, service.InvalidInput(
-			fmt.Sprintf("invalid input for permission: %v", permission),
+			fmt.Sprintf("invalid input for permission: %v", permissionLevel),
 			err,
 		)
 	}
@@ -600,12 +625,12 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 	ctx context.Context, 
 	userId uuid.UUID, 
 	documentId uuid.UUID, 
-	permission service.Permission,
+	permissionLevel service.PermissionLevel,
 ) (err error) {
-	repoPermission, err := serviceToRepoPermission(permission)
+	repoPermission, err := serviceToRepoPermissionLevel(permissionLevel)
 	if err != nil {
 		return service.InvalidInput(
-			fmt.Sprintf("invalid input for permission: %d", permission),
+			fmt.Sprintf("invalid input for permission: %d", permissionLevel),
 			err,
 		)
 	}
@@ -626,12 +651,12 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 	ctx context.Context,
 	guestId uuid.UUID,
 	documentId uuid.UUID,
-	permission service.Permission,
+	permissionLevel service.PermissionLevel,
 ) (err error) {
-	permissionRepo, err := serviceToRepoPermission(permission)
+	permissionRepo, err := serviceToRepoPermissionLevel(permissionLevel)
 	if err != nil {
 		return service.InvalidInput(
-			fmt.Sprintf("invalid input received for permission: %d", permission),
+			fmt.Sprintf("invalid input received for permission: %d", permissionLevel),
 			err,
 		)
 	}

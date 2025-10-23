@@ -30,6 +30,7 @@ var _ service.DocumentRepository = (*DocumentRepository)(nil)
 // we are assigning a nil pointer as a pointer to a repository.DocumentRepository
 // variable. This checks at runtime if the repository.DocumentRepository struct type 
 // implements the methods in the document repository interface
+// I really like this neat trick
 
 // define a factory method for that struct
 func NewDocumentRepository(pool *pgxpool.Pool) *DocumentRepository {
@@ -93,25 +94,30 @@ func repoToServicePermissionLevel(
 func repoToServicePermission(
 	permissionRepo sqlc.Permission,
 ) (service.Permission, error) {
+	errorSuffix := fmt.Sprintf(
+		" of recipient: %s on document: %s", 
+		permissionRepo.RecipientID.String(), 
+		permissionRepo.DocumentID.String(),
+	)
 	permissionLevel, err := repoToServicePermissionLevel(permissionRepo.PermissionLevel)
 	if err != nil {
-		return service.Permission{}, service.RepoImpl("failed to parse permission level", err)
+		return service.Permission{}, service.RepoImpl("failed to parse permission level" + errorSuffix, err)
 	}
 	serviceRecipientType, err := repoToServiceRecipientType(permissionRepo.RecipientType)
 	if err != nil {
-		return service.Permission{}, service.RepoImpl("failed to parse recipient type", err)
+		return service.Permission{}, service.RepoImpl("failed to parse recipient type" + errorSuffix, err)
 	}
 	recipientId, err := uuid.FromBytes(permissionRepo.RecipientID.Bytes[:])
 	if err != nil {
-		return service.Permission{}, service.RepoImpl("failed to parse the recipient id", err)
+		return service.Permission{}, service.RepoImpl("failed to parse the recipient id" + errorSuffix, err)
 	}
 	documentId, err := uuid.FromBytes(permissionRepo.DocumentID.Bytes[:])
 	if err != nil {
-		return service.Permission{}, service.RepoImpl("failed to parse the document id", err)
+		return service.Permission{}, service.RepoImpl("failed to parse the document id" + errorSuffix, err)
 	}
 	creatorId, err := uuid.FromBytes(permissionRepo.CreatedBy.Bytes[:])
 	if err != nil {
-		return service.Permission{}, service.RepoImpl("failed to parse created by id", err)
+		return service.Permission{}, service.RepoImpl("failed to parse created by id" + errorSuffix, err)
 	}
 	return service.Permission{
 		RecipientID: recipientId,
@@ -372,7 +378,7 @@ func (dr *DocumentRepository) readDocuments(
 		params := sqlc.ListDocumentsByCreatedAtParams{
 			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true },
 			CreatedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenID, Valid: true },
 			Limit: pageSize,
 			PermissionsList: repoPermissionList,
 		}
@@ -392,7 +398,7 @@ func (dr *DocumentRepository) readDocuments(
 		params := sqlc.ListDocumentsByLastModifiedAtParams{
 			RecipientID: pgtype.UUID{ Bytes: principalId, Valid: true},
 			LastModifiedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
-			ID: pgtype.UUID{ Bytes: cursor.LastSeenDocument, Valid: true },
+			ID: pgtype.UUID{ Bytes: cursor.LastSeenID, Valid: true },
 			Limit: pageSize,
 			PermissionsList: repoPermissionList,
 		}
@@ -458,17 +464,17 @@ func (dr *DocumentRepository) ListDocumentsByPrincipal(
 	if err != nil {
 		return nil, nil, err
 	}
-	// populate the new
+	// populate the new cursor
 	if len(documentPermissions) > 0 {
 		if cursorResp.SortField == service.CreatedAt {
 			cursorResp.LastSeenTime = documentPermissions[len(documentPermissions) - 1].Document.CreatedAt
 		} else {
 			cursorResp.LastSeenTime = documentPermissions[len(documentPermissions) - 1].Document.LastModifiedAt
 		}
-		cursorResp.LastSeenDocument = documentPermissions[len(documentPermissions) - 1].Document.ID
+		cursorResp.LastSeenID = documentPermissions[len(documentPermissions) - 1].Document.ID
 	} else {
 		cursorResp.LastSeenTime = cursor.LastSeenTime
-		cursorResp.LastSeenDocument = cursor.LastSeenDocument
+		cursorResp.LastSeenID = cursor.LastSeenID
 	}
 
 	return documentPermissions, cursorResp, nil
@@ -514,18 +520,85 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 	return repoToServicePermission(row)
 }
 
-// TODO: this function should be paginated using a cursor
+// call the relevant list permissions on document helper function with the correct cursor input
+// parse service permissions objects from the sqlc permission objects
+// create a response cursor
+// return the parsed permissions and the cursor
+// func (dr *DocumentRepository) readPermissions(
+// 	ctx context.Context,
+
+// )
+
+/*
+CHECKPOINT:
+- you were modifying the sql queries so that they were paginated for listing permissions by document id
+  using either the created at or the last modified at fields as sort keys in descending order with the
+  recipientID as the tiebreaker
+	- this works because we are always searching on the document id
+	- might be worth it to just make two cursor objects then?
+	- the trade off is code duplication for readability? I think the code duplication is minimal so
+	  it is worth it
+- after that you were going to change the repo implementation to be paginated and return a cursor
+*/
+func (dr *DocumentRepository) readPermissions(
+	ctx context.Context,
+	documentId uuid.UUID,
+	permissionFilter []sqlc.PermissionLevel,
+	cursor *service.Cursor,
+	maxPermissions int32,
+) (repoPermissions []sqlc.Permission, err error) {
+	switch cursor.SortField {
+	case service.CreatedAt:
+		params := sqlc.ListPermissionOnDocumentCreatedAtParams{
+			DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
+			CreatedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
+			RecipientID: pgtype.UUID{ Bytes: cursor.LastSeenID, Valid: true },
+			Limit: maxPermissions,
+			PermissionsList: permissionFilter,
+		}
+		repoPermissions, err = dr.queries.ListPermissionOnDocumentCreatedAt(ctx, params)
+		if err != nil {
+			return nil, service.RepoImpl(fmt.Sprintf("failed to retrieve permissions on document %s", documentId.String()), err)
+		}
+	case service.LastModifiedAt:
+		params := sqlc.ListPermissionOnDocumentLastModifiedAtParams{
+			DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
+			LastModifiedAt: pgtype.Timestamptz{ Time: cursor.LastSeenTime, Valid: true },
+			RecipientID: pgtype.UUID{ Bytes: cursor.LastSeenID, Valid: true },
+			Limit: maxPermissions,
+			PermissionsList: permissionFilter,
+		}
+		repoPermissions, err = dr.queries.ListPermissionOnDocumentLastModifiedAt(ctx, params)
+		if err != nil {
+			return nil, service.RepoImpl(fmt.Sprintf("failed to retrieve permissions on document %s", documentId.String()), err)
+		}
+	}
+	return repoPermissions, nil
+}
+
 func (dr *DocumentRepository) ListPermissionsOnDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
-) (permissions []service.Permission, err error) {
+	permissionFilter []service.PermissionLevel,
+	cursor *service.Cursor,
+	pageSize int32,
+) (permissions []service.Permission, respCursor *service.Cursor, err error) {
+	// parse the permission filters
+	repoPermissionFilter := make([]sqlc.PermissionLevel, len(permissionFilter))
+	for i, pl := range permissionFilter {
+		rpl, err := serviceToRepoPermissionLevel(pl)
+		if err != nil {
+			return nil, nil, service.RepoImpl("failed to parse permission filter", err)
+		}
+		repoPermissionFilter[i] = rpl
+	}
 	// get the recipient permission rows from the database
-	repoPermissions, err := dr.queries.ListPermissionsOnDocument(
-		ctx, pgtype.UUID{ Bytes: documentId, Valid: true},
+	repoPermissions, err := dr.readPermissions(
+		ctx, documentId, repoPermissionFilter, cursor, pageSize,
 	)
 	// return errors if necessary
 	if err != nil {
-		return nil, service.RepoImpl(
+		return nil, nil, service.RepoImpl(
 			fmt.Sprintf("failed to read permissions on document: %s", documentId.String()),
 			err,
 		)	
@@ -535,11 +608,27 @@ func (dr *DocumentRepository) ListPermissionsOnDocument(
 	for i, elem := range repoPermissions {
 		servicePermission, err := repoToServicePermission(elem)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		permissions[i] = servicePermission
 	}
-	return permissions, nil
+	// construct a return cursor
+	// if we retrieved previously unseen permissions, then update the cursor with the new permission 
+	// information, else, we update it with the previously seen cursor information
+	respCursor = &service.Cursor{ SortField: cursor.SortField }
+	if len(permissions) > 0 {
+		respCursor.LastSeenID = permissions[len(permissions) - 1].RecipientID
+		switch cursor.SortField {
+		case service.CreatedAt:
+			respCursor.LastSeenTime = permissions[len(permissions) - 1].CreatedAt
+		case service.LastModifiedAt:
+			respCursor.LastSeenTime = permissions[len(permissions) - 1].LastModifiedAt
+		}
+	} else {
+		respCursor.LastSeenID = cursor.LastSeenID
+		respCursor.LastSeenTime = cursor.LastSeenTime
+	}
+	return permissions, respCursor, nil
 }
 
 func (dr *DocumentRepository) CreateGuest(

@@ -47,9 +47,21 @@ LIMIT $4;
 SELECT * FROM permissions 
 WHERE document_id = $1 AND recipient_id = $2;
 
--- name: ListPermissionsOnDocument :many
+-- name: ListPermissionOnDocumentCreatedAt :many
 SELECT * FROM permissions
-WHERE document_id = $1;
+WHERE document_id = $1
+AND created_at < $2 OR (created_at == $2 AND recipient_id < $3)
+AND permission_level = ANY(@permissions_list::permission_level[])
+ORDER BY created_at DESC, recipient_id DESC
+LIMIT $4;
+
+-- name: ListPermissionOnDocumentLastModifiedAt :many
+SELECT * FROM permissions
+WHERE document_id = $1
+AND last_modified_at < $2 OR (last_modified_at == $2 AND recipient_id < $3)
+AND permission_level = ANY(@permissions_list::permission_level[])
+ORDER BY last_modified_at DESC, recipient_id DESC
+LIMIT $4;
 
 -- name: UpsertPermissionUser :exec
 INSERT INTO permissions (

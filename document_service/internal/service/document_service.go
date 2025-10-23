@@ -52,7 +52,7 @@ type Permission struct {
 type Cursor struct {
 	SortField SortField
 	LastSeenTime time.Time
-	LastSeenDocument uuid.UUID
+	LastSeenID uuid.UUID
 }
 
 type DocumentPermission struct {
@@ -87,7 +87,8 @@ type DocumentRepository interface {
 	// list the documents that are associated with that user at those permission levels
 	ListDocumentsByPrincipal(ctx context.Context, principalId uuid.UUID, permissions []PermissionLevel, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
 	GetPermissionOfPrincipalOnDocument(ctx context.Context, documentId uuid.UUID, principalId uuid.UUID) (permission Permission, err error)
-	ListPermissionsOnDocument(ctx context.Context, documentId uuid.UUID) (recipientPermissions []Permission, err error)
+	// consider if we also want to be able to filter on user type here
+	ListPermissionsOnDocument(ctx context.Context, documentId uuid.UUID, permissions []PermissionLevel, cursor *Cursor, pageSize int32) (recipientPermissions []Permission, cursorResp *Cursor, err error)
 	CreateGuest(ctx context.Context, creatorId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (guestId uuid.UUID, err error)
 	UpsertPermissionsUser(ctx context.Context, userId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (err error)
 	UpdatePermissionGuest(ctx context.Context, guestId uuid.UUID, documentId uuid.UUID, permission PermissionLevel) (err error)

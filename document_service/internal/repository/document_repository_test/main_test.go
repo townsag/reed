@@ -26,7 +26,6 @@ Testing strategy:
 		- create a document -> share the document with a guest -> view document in list by guest id -> delete the permission of the guest on that document -> view that the permission is missing in list docs by guest id
 		- create a few documents -> share each with the same user -> verify that the permission filtering works by listing docs by user id with different permission level params
 	- ListPermissionsOnDocument flows:
-		- !!! Update the interface to return both Permission and Permission level before making these tests !!!
 		- create a document -> share the document with a user -> verify that the permissions are present for both using list by document -> delete the permissions on the shared user -> verify that the permissions are missing for the shared user
 		- create a document -> share the document with a user -> verify that the permissions are present for both using list by document -> update the permission on the shared user -> verify that the permissions are updated for the shared user
 		- create a document -> share the document with a user -> delete the document -> verify that the permissions are gone using list permissions by document

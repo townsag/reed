@@ -285,6 +285,8 @@ Yjs or Yrs or Ywasm implementation:
     - tests
         - each test has to implement the same setup code
         - python unit testing framework allows the test class to do setup once and then each test method of the test class can access shared testing resources
+- every business logic change should either change a test or add a test
+    - this also requires that the code is written in such a way that it is testable
 
 ## Distributed Systems Best Practices:
 - use asynchronous communication when possible

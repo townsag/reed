@@ -32,10 +32,10 @@ func TestListDocumentsByPrincipal_OnUser_DeleteDocumentPath_Integration(t *testi
 		t.Fatalf("failed to get created document with error: %v", err)
 	}
 	// create a list of permissions and a an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Owner, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Owner, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal
 	documentPermissions, respCursor, err := documentRepo.ListDocumentsByPrincipal(t.Context(), userId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -59,8 +59,8 @@ func TestListDocumentsByPrincipal_OnUser_DeleteDocumentPath_Integration(t *testi
 		t.Fatalf("failed to retrieve the created document %s, got this list of document permissions: %v",documentId, documentPermissions)
 	}
 	// verify that the response cursor is correctly formed
-	if respCursor.LastSeenDocument != documentId {
-		t.Errorf("the returned cursor has the wrong last seen document value, want: %v, got: %v", documentId, respCursor.LastSeenDocument)
+	if respCursor.LastSeenID != documentId {
+		t.Errorf("the returned cursor has the wrong last seen document value, want: %v, got: %v", documentId, respCursor.LastSeenID)
 	}
 	if respCursor.LastSeenTime != document.CreatedAt {
 		t.Errorf("the returned cursor has the wrong last seen time value, want %v, got: %v", document.CreatedAt, respCursor.LastSeenTime)
@@ -79,8 +79,8 @@ func TestListDocumentsByPrincipal_OnUser_DeleteDocumentPath_Integration(t *testi
 		t.Errorf("failed to remove permission on document after deleting the document, expected empty list, got: %v", documentPermissions)
 	}
 	// verify that the nil response cursor is correct
-	if respCursor.LastSeenDocument != service.MaxDocumentID() {
-		t.Errorf("failed to return a correct nil cursor value for last seen document, want: %v, got: %v", service.MaxDocumentID(), respCursor.LastSeenDocument)
+	if respCursor.LastSeenID != service.MaxDocumentID() {
+		t.Errorf("failed to return a correct nil cursor value for last seen document, want: %v, got: %v", service.MaxDocumentID(), respCursor.LastSeenID)
 	}
 	if respCursor.LastSeenTime != cursor.LastSeenTime {
 		t.Errorf(
@@ -112,10 +112,10 @@ func TestListDocumentsByPrincipal_OnUser_DeletePermissionPath_Integration(t *tes
 		t.Fatalf("failed to create a permission on a document with error: %v", err)
 	}
 	// create a list of permissions and a an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Owner, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Owner, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal for the recipient user
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(t.Context(), recipientUserId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -172,10 +172,10 @@ func TestListDocumentsByPrincipal_OnUser_UpdatePermissionPath_Integration(t *tes
 		t.Fatalf("failed to create a permission on a document with error: %v", err)
 	}
 	// create a list of permissions and a an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Owner, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Owner, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(t.Context(), recipientUserId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -243,10 +243,10 @@ func TestListDocumentsByPrincipal_OnGuest_DeleteDocumentPath_Integration(t *test
 		t.Fatalf("failed to create a guest with error: %v", guestId)
 	}
 	// create a list of permissions and an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal for the recipient user
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(t.Context(), guestId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -301,10 +301,10 @@ func TestListDocumentsByPrincipal_OnGuest_DeletePermissionPath_Integration(t *te
 		t.Fatalf("failed to create a guest with error: %v", guestId)
 	}
 	// create a list of permissions and an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal for the recipient user
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(t.Context(), guestId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -358,10 +358,10 @@ func TestListDocumentsByPrincipal_OnGuest_UpdatePermissionPath_Integration(t *te
 		t.Fatalf("failed to create a guest with error: %v", guestId)
 	}
 	// create a list of permissions and an empty cursor to call the ListDocumentsByPrincipal function with
-	permissionsFilter := []service.Permission{service.Editor, service.Viewer}
+	permissionsFilter := []service.PermissionLevel{service.Editor, service.Viewer}
 	// use the current time as the last seen time, the cursor will start at the last seen time
 	// then traverse the created at index in descending order
-	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenDocument: service.MaxDocumentID() }
+	cursor := service.Cursor{ SortField: service.CreatedAt, LastSeenTime: time.Now(), LastSeenID: service.MaxDocumentID() }
 	// view that document in the response from ListDocumentsByPrincipal for the recipient user
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(t.Context(), guestId, permissionsFilter, &cursor, 10)
 	if err != nil {
@@ -403,7 +403,7 @@ func verifyDocumentPermission(
 	t *testing.T,
 	documentPermissions []service.DocumentPermission,
 	desiredDocumentId uuid.UUID,
-	desiredPermissionLevel service.Permission,
+	desiredPermissionLevel service.PermissionLevel,
 ) bool {
 	// iterate through the list of document permissions
 	// keep track of wether the correct document permission is found
@@ -453,11 +453,11 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		t.Fatalf("failed to share document with user with error: %v", err)
 	}
 	// verify that the user can see both documents when filtering on owner permission
-	permissions := []service.Permission{service.Owner}
+	permissions := []service.PermissionLevel{service.Owner}
 	cursor := &service.Cursor{
 		SortField: service.CreatedAt,
 		LastSeenTime: time.Now(),
-		LastSeenDocument: service.MaxDocumentID(),
+		LastSeenID: service.MaxDocumentID(),
 	}
 	documentPermissions, _, err := documentRepo.ListDocumentsByPrincipal(
 		t.Context(), userId, permissions, cursor, 10,
@@ -473,7 +473,7 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		t.Errorf("failed to find document B in the list of retrieved documents for the dummy user")
 	}
 	// verify that the user can see no documents when filtering on editor permissions
-	permissions = []service.Permission{service.Editor}
+	permissions = []service.PermissionLevel{service.Editor}
 	documentPermissions, _, err = documentRepo.ListDocumentsByPrincipal(
 		t.Context(), userId, permissions, cursor, 10,
 	)
@@ -484,7 +484,7 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		t.Errorf("received permissions even after filtering out all expected permissions, want an empty list, got: %v", documentPermissions)
 	}
 	// verify that the recipient user can see no documents when filtering on the owner permission
-	permissions = []service.Permission{ service.Owner }
+	permissions = []service.PermissionLevel{ service.Owner }
 	documentPermissions, _, err = documentRepo.ListDocumentsByPrincipal(
 		t.Context(), recipientUserId, permissions, cursor, 10,
 	)
@@ -499,7 +499,7 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		)
 	}
 	// verify that the recipient user can see the first document when filtering on the editor permission
-	permissions = []service.Permission{ service.Editor }
+	permissions = []service.PermissionLevel{ service.Editor }
 	documentPermissions, _, err = documentRepo.ListDocumentsByPrincipal(
 		t.Context(), recipientUserId, permissions, cursor, 10,
 	)
@@ -510,7 +510,7 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		t.Errorf("failed to find document A in the list of retrieved documents for the recipient user")
 	}
 	// verify that the recipient user can see the second document when filtering on the viewer permission
-	permissions = []service.Permission{ service.Viewer }
+	permissions = []service.PermissionLevel{ service.Viewer }
 	documentPermissions, _, err = documentRepo.ListDocumentsByPrincipal(
 		t.Context(), recipientUserId, permissions, cursor, 10,
 	)
@@ -528,7 +528,7 @@ func TestListDocumentsByPrincipal_NilCursor_Unit(t *testing.T) {
 	documentRepo := &repository.DocumentRepository{}
 	// verify that calling list documents by principal with a nil cursor returns an error
 	_, _, err := documentRepo.ListDocumentsByPrincipal(
-		t.Context(), uuid.New(), []service.Permission{service.Editor }, nil, 10,
+		t.Context(), uuid.New(), []service.PermissionLevel{service.Editor }, nil, 10,
 	)
 	if err == nil {
 		t.Errorf("expected an error when calling with bad cursor but instead received nil")
@@ -544,11 +544,11 @@ func TestListDocumentsByPrincipal_EmptyPermissionsFilter_Unit(t *testing.T) {
 	documentRepo := &repository.DocumentRepository{}
 	// verify that calling the list documents by principal id with an empty permission
 	// filter list returns an error
-	var permissions []service.Permission
+	var permissions []service.PermissionLevel
 	cursor := &service.Cursor{
 		SortField: service.CreatedAt,
 		LastSeenTime: time.Now(),
-		LastSeenDocument: service.MaxDocumentID(),
+		LastSeenID: service.MaxDocumentID(),
 	}
 	_, _, err := documentRepo.ListDocumentsByPrincipal(
 		t.Context(), uuid.New(), permissions, cursor, 10,
@@ -568,11 +568,11 @@ func TestListDocumentsByPrincipal_InvalidPermissionsFilter_Unit(t *testing.T) {
 	documentRepo := &repository.DocumentRepository{}
 	// verify that calling the list documents by principal id with an invalid permission
 	// returns an error
-	permissions := []service.Permission{ 42 }
+	permissions := []service.PermissionLevel{ 42 }
 	cursor := &service.Cursor{
 		SortField: service.CreatedAt,
 		LastSeenTime: time.Now(),
-		LastSeenDocument: service.MaxDocumentID(),
+		LastSeenID: service.MaxDocumentID(),
 	}
 	_, _, err := documentRepo.ListDocumentsByPrincipal(
 		t.Context(), uuid.New(), permissions, cursor, 10,

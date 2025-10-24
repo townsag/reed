@@ -540,8 +540,9 @@ CHECKPOINT:
 	  it is worth it
 - after that you were going to change the repo implementation to be paginated and return a cursor
 */
-func (dr *DocumentRepository) readPermissions(
+func readPermissions(
 	ctx context.Context,
+	txQueries *sqlc.Queries,
 	documentId uuid.UUID,
 	permissionFilter []sqlc.PermissionLevel,
 	cursor *service.Cursor,
@@ -556,7 +557,7 @@ func (dr *DocumentRepository) readPermissions(
 			Limit: maxPermissions,
 			PermissionsList: permissionFilter,
 		}
-		repoPermissions, err = dr.queries.ListPermissionOnDocumentCreatedAt(ctx, params)
+		repoPermissions, err = txQueries.ListPermissionOnDocumentCreatedAt(ctx, params)
 		if err != nil {
 			return nil, service.RepoImpl(fmt.Sprintf("failed to retrieve permissions on document %s", documentId.String()), err)
 		}
@@ -568,7 +569,7 @@ func (dr *DocumentRepository) readPermissions(
 			Limit: maxPermissions,
 			PermissionsList: permissionFilter,
 		}
-		repoPermissions, err = dr.queries.ListPermissionOnDocumentLastModifiedAt(ctx, params)
+		repoPermissions, err = txQueries.ListPermissionOnDocumentLastModifiedAt(ctx, params)
 		if err != nil {
 			return nil, service.RepoImpl(fmt.Sprintf("failed to retrieve permissions on document %s", documentId.String()), err)
 		}
@@ -583,18 +584,49 @@ func (dr *DocumentRepository) ListPermissionsOnDocument(
 	cursor *service.Cursor,
 	pageSize int32,
 ) (permissions []service.Permission, respCursor *service.Cursor, err error) {
+	// check for an empty permissionFilter list
+	if len(permissionFilter) < 1 {
+		return nil, nil, service.InvalidInput("permission filter list is empty, need at least one valid permission", nil)
+	}
 	// parse the permission filters
 	repoPermissionFilter := make([]sqlc.PermissionLevel, len(permissionFilter))
 	for i, pl := range permissionFilter {
 		rpl, err := serviceToRepoPermissionLevel(pl)
 		if err != nil {
-			return nil, nil, service.RepoImpl("failed to parse permission filter", err)
+			return nil, nil, service.InvalidInput("failed to parse permission filter", err)
 		}
 		repoPermissionFilter[i] = rpl
 	}
+	// check for a nil cursor
+	if cursor == nil {
+		return nil, nil, service.ErrNilPointer
+	}
+	// create a transaction at the repeatable read level, this grantees that this transaction will not see
+	// the effects of another transaction that may be concurrently deleting the document.
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{ IsoLevel: pgx.RepeatableRead })
+	if err != nil {
+		return nil, nil, service.RepoImpl("failed to begin a database transaction", err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := dr.queries.WithTx(tx)
+	// verify that the document exists
+	_, err = txQueries.GetDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, service.NotFound(
+				fmt.Sprintf("no document found with id %s", documentId.String()),
+				err,
+			)
+		} else {
+			return nil, nil, service.RepoImpl(
+				fmt.Sprintf("error when trying to list permissions on document with id: %s", documentId.String()),
+				err,
+			)
+		}
+	}
 	// get the recipient permission rows from the database
-	repoPermissions, err := dr.readPermissions(
-		ctx, documentId, repoPermissionFilter, cursor, pageSize,
+	repoPermissions, err := readPermissions(
+		ctx, txQueries, documentId, repoPermissionFilter, cursor, pageSize,
 	)
 	// return errors if necessary
 	if err != nil {

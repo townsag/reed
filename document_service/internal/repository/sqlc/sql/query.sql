@@ -50,15 +50,18 @@ WHERE document_id = $1 AND recipient_id = $2;
 -- name: ListPermissionOnDocumentCreatedAt :many
 SELECT * FROM permissions
 WHERE document_id = $1
-AND created_at < $2 OR (created_at == $2 AND recipient_id < $3)
+AND (created_at < $2 OR (created_at = $2 AND recipient_id < $3))
 AND permission_level = ANY(@permissions_list::permission_level[])
 ORDER BY created_at DESC, recipient_id DESC
 LIMIT $4;
+-- sql language quirk, Ands are processed with a higher precedence than Ors
+-- this means that the cursor clause will be split into two expressions at the OR
+-- because the Ands on either side are processed first
 
 -- name: ListPermissionOnDocumentLastModifiedAt :many
 SELECT * FROM permissions
 WHERE document_id = $1
-AND last_modified_at < $2 OR (last_modified_at == $2 AND recipient_id < $3)
+AND (last_modified_at < $2 OR (last_modified_at = $2 AND recipient_id < $3))
 AND permission_level = ANY(@permissions_list::permission_level[])
 ORDER BY last_modified_at DESC, recipient_id DESC
 LIMIT $4;

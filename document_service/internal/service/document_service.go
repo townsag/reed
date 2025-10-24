@@ -68,6 +68,14 @@ func MaxDocumentID() uuid.UUID {
     return maxUUID
 }
 
+func NewBeginningCursor(sortField SortField) *Cursor {
+	return &Cursor{
+		SortField: sortField,
+		LastSeenTime: time.Now(),
+		LastSeenID: MaxDocumentID(),
+	}
+}
+
 /*
 Open questions:
 - should the calling code or the repository be in charge of generating

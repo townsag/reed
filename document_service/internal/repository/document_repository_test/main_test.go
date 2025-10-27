@@ -17,6 +17,8 @@ Testing strategy:
 	- [x] create document -> get document -> update document -> get document
 	- [x] create document -> get document -> delete document -> get document
 	- [ ] verify that deleting a document also deletes all the permissions on that document and the guests that had permissions on that document
+- [ ] permission crud:
+	- verify that when a permission is created all the fields are correctly populated
 - [ ] guest crud testing:
 	- [ ] verify that deleting a document deletes the guests that had permission on that document
 	- [ ] verify that deleting a guests permission on a document also deletes the guest? should we do this... probably
@@ -38,13 +40,11 @@ Testing strategy:
 		- [x] create a document -> share the document with a guest -> verify that the permissions are present -> update the permissions of the guest -> verify that the permissions are updated using list permissions by doc
 		- [x] create a document -> share the document with a guest -> verify that the permissions are present -> delete the guests permissions on that document -> verify that the permissions are removed by listing permissions by document
 		- [x] create a document -> share the document with a few users at different permission levels -> verify that permission level filtering works by calling list permissions by document id
-	- [ ] GetPermissionOfPrincipalOnDocument:
-		- [ ] create a document -> share document with a user -> verify that the user has permissions on document -> update permission of user on document -> verify that the permission of the user has changed
-		- [ ] create a document -> share document with guest -> verify guest has permission on document -> update the permission of guest on doc -> verify that the permissions of the guest on doc have changed
-		- [ ] create a document -> share the document with user -> verify the user has permissions on doc -> delete the permissions of user on document -> verify that the permissions have been deleted
-		- [ ] create a document -> share the document with a guest -> verify the guest has permissions on doc -> delete the permissions of guest on doc -> verify that guest no longer has permissions on doc
-		- [ ] create a document -> share the document with a user -> verify the user has permissions on doc -> delete the document -> verify the user no longer has permissions on the document
-		- [ ] create a document -> share the document with a guest -> verify the guest has permissions on doc -> delete the document -> verify the guest no longer has permissions on the document
+	- [x] GetPermissionOfPrincipalOnDocument:
+		- [x] create a document -> share document with a user -> verify that the user has permissions on document -> update permission of user on document -> verify that the permission of the user has changed
+		- [x] create a document -> share document with guest -> verify guest has permission on document -> update the permission of guest on doc -> verify that the permissions of the guest on doc have changed
+		- [x] create a document -> share the document with user -> verify the user has permissions on doc -> delete the permissions of user on document -> verify that the permissions have been deleted
+		- [x] create a document -> share the document with a guest -> verify the guest has permissions on doc -> delete the permissions of guest on doc -> verify that guest no longer has permissions on doc
 - [ ] verify the failure not found cases for all the methods of making mutations and observing mutations
 	- [ ] GetDocument:
 		- [ ] calling get document on a document that doesn't exist returns an error
@@ -52,8 +52,8 @@ Testing strategy:
 		- [ ] calling update document on a document that doesn't exist returns an error
 	- [ ] DeleteDocument:
 		- [ ] calling delete document on a document that does not exist returns an error
-	- [ ] GetPermissionOfPrincipalOnDocument:
-		- [ ] calling get permissions of principal on doc with an invalid doc id returns a not found error
+	- [x] GetPermissionOfPrincipalOnDocument:
+		- [x] calling get permissions of principal on doc with an invalid doc id returns a not found error
 	- [x] ListPermissionsOnDocument
 		- [x] calling list permissions on doc with a missing doc id returns a not found error
 	- [ ] CreateGuest

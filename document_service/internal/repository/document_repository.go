@@ -243,7 +243,7 @@ func (dr *DocumentRepository) UpdateDocument(
 	documentDescription *string,
 ) error {
 	if documentName == nil && documentDescription == nil {
-		return nil
+		return service.InvalidInput("at least of of name or description must be non nil", nil)
 	}
 	params := sqlc.UpdateDocumentParams{
 		ID: pgtype.UUID{ Bytes: documentId, Valid: true },
@@ -678,13 +678,32 @@ func (dr *DocumentRepository) CreateGuest(
 			err,
 		)
 	}
+	/*
+	- explicitly check if the document exists at the beginning of the transaction
+		- if the document does not exist, return a not found error
+		- this is preferable to parsing the foreign key missing error that we would get
+		  for inserting a guest to an invalid document because we know the error explicitly
+		  instead of guessing at the foreign key that is missing
+	*/
 	// get a transaction
-	tx, err := dr.pool.Begin(ctx)
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{ IsoLevel: pgx.RepeatableRead })
 	if err != nil {
 		return uuid.Nil, service.RepoImpl("failed to create a transaction when creating a guest", err)
 	}
 	defer tx.Rollback(ctx)
 	txQueries := dr.queries.WithTx(tx)
+	// query the documents table to see if the document exists
+	_, err = txQueries.GetDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, service.NotFound(
+				fmt.Sprintf("the document with id: %v was not found", documentId.String()),
+				err,
+			)
+		} else {
+			return uuid.Nil, service.RepoImpl("failed to validate document id with database error", err)
+		}
+	}
 	// add a new guest to the guests table
 	params := sqlc.CreateGuestParams{
 		ID: pgtype.UUID{ Bytes: guestId, Valid: true },
@@ -755,6 +774,15 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 			err,
 		)
 	}
+	/*
+	CHECKPOINT:
+	- you were here
+	- update this function to verify that the document exists before trying to create
+	  a permission for a user on that document
+		- create a transaction at repeatable read level
+		- check if the document exists
+		- if not, return a not found error
+	*/
 	params := sqlc.UpsertPermissionUserParams{
 		RecipientID: pgtype.UUID{ Bytes: userId, Valid: true },
 		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },

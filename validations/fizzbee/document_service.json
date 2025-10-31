@@ -1,0 +1,180 @@
+{
+  "sourceInfo": {
+    "fileName": "document_service.fizz",
+    "start": {
+      "line": 7,
+      "column": 1
+    },
+    "end": {
+      "line": 17
+    }
+  },
+  "actions": [
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 13,
+          "column": 1
+        },
+        "end": {
+          "line": 17
+        }
+      },
+      "name": "Init",
+      "flow": "FLOW_ATOMIC",
+      "fairness": {
+        "level": "FAIRNESS_LEVEL_STRONG"
+      },
+      "block": {
+        "sourceInfo": {
+          "start": {
+            "line": 15,
+            "column": 5
+          },
+          "end": {
+            "line": 17
+          }
+        },
+        "flow": "FLOW_ATOMIC",
+        "stmts": [
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 15,
+                "column": 5
+              },
+              "end": {
+                "line": 16,
+                "column": 4
+              }
+            },
+            "callStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 15,
+                  "column": 5
+                },
+                "end": {
+                  "line": 15,
+                  "column": 21
+                }
+              },
+              "vars": [
+                "client"
+              ],
+              "name": "Client"
+            }
+          },
+          {
+            "sourceInfo": {
+              "start": {
+                "line": 16,
+                "column": 5
+              },
+              "end": {
+                "line": 17
+              }
+            },
+            "callStmt": {
+              "sourceInfo": {
+                "start": {
+                  "line": 16,
+                  "column": 5
+                },
+                "end": {
+                  "line": 16,
+                  "column": 31
+                }
+              },
+              "vars": [
+                "service"
+              ],
+              "name": "DocumentService"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 7,
+          "column": 1
+        },
+        "end": {
+          "line": 10
+        }
+      },
+      "name": "DocumentService",
+      "stmts": [
+        {
+          "sourceInfo": {
+            "start": {
+              "line": 8,
+              "column": 5
+            },
+            "end": {
+              "line": 10
+            }
+          },
+          "pyStmt": {
+            "sourceInfo": {
+              "start": {
+                "line": 8,
+                "column": 5
+              },
+              "end": {
+                "line": 8,
+                "column": 8
+              }
+            },
+            "code": "pass"
+          }
+        }
+      ]
+    },
+    {
+      "sourceInfo": {
+        "start": {
+          "line": 10,
+          "column": 1
+        },
+        "end": {
+          "line": 13
+        }
+      },
+      "name": "Client",
+      "stmts": [
+        {
+          "sourceInfo": {
+            "start": {
+              "line": 11,
+              "column": 5
+            },
+            "end": {
+              "line": 13
+            }
+          },
+          "pyStmt": {
+            "sourceInfo": {
+              "start": {
+                "line": 11,
+                "column": 5
+              },
+              "end": {
+                "line": 11,
+                "column": 8
+              }
+            },
+            "code": "pass"
+          }
+        }
+      ]
+    }
+  ],
+  "frontMatter": {
+    "yaml": "# Temporarily disable deadlock detection\ndeadlock_detection: false\n"
+  }
+}

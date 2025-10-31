@@ -1,0 +1,109 @@
+---
+# Temporarily disable deadlock detection
+deadlock_detection: false
+---
+
+NonBlockingFifo = Channel(ordering='unordered', delivery='exactly_once', blocking='fire_and_forget')
+
+role DocumentService:
+    action Init:
+        self.documents = set()
+        self.permissions = dict()
+
+    action CreateDocument:
+        documentId = any documents : documentId not in self.documents
+        self.documents.add(documentId)
+
+    atomic action CreatePermission:
+        # choose a random document
+        documentId = any documents 
+        # choose a random user
+        userId = any users
+        if documentId in self.documents:
+            if documentId not in self.permissions:
+                self.permissions[documentId] = set()
+            self.permissions[documentId].add(userId)
+            
+    atomic action DeleteDocument:
+        # choose a random document
+        documentId = any documents
+        if documentId in self.documents:
+            self.documents.remove(documentId)
+        if documentId in self.permissions:
+            # send a event for each user that has permission on that document
+            for userId in self.permissions[documentId]:
+                # use atomic actions to indicate that if we are going to delete a permission
+                # we are also going to write an event to the queue
+                fifoQueue.receivePermissionUpdate(documentId, userId, True)
+            # delete all the permissions on that document be deleting the permissions set
+            self.permissions.pop(documentId)
+
+    atomic action DeletePermission:
+        # choose a random document
+        documentId = any documents 
+        # choose a random user
+        userId = any users
+        if documentId in self.permissions and userId in self.permissions[documentId]:
+            self.permissions[documentId].remove(userId)
+            # use atomic actions to indicate that if we are going to delete a permission 
+            # we are also going to write an event to the queue
+            fifoQueue.receivePermissionUpdate(documentId, userId, True)
+    
+    func CheckPermission(documentId, userId):
+        return documentId in self.permissions and userId in self.permissions[documentId]
+
+role MessageProxyService:
+    action Init:
+        # connections is a set of userId, documentId tuples
+        # this represent the stateful connections that an instance of the
+        # message proxy service can make with clients 
+        self.connections = set()
+    
+    action Connect:
+        # choose a random document
+        documentId = any documents
+        # choose a random user
+        userId = any users
+        # check that the user has permission on that document
+        # if so add the connection of that user to that document
+        hasPermission = documentService.CheckPermission(documentId, userId)
+        if hasPermission:
+            self.connections.add((documentId, userId))
+            
+    func receivePermissionUpdate(documentId, userId, isRevoked):
+        # TODO: we need to explicitly model the fact that the message proxy service
+        #       only starts listening for permission update events when it has
+        #       already made a connection for that documentId
+        if isRevoked:
+            if (documentId, userId) in self.connections:
+                self.connections.remove((documentId, userId))
+
+action Init:
+    # init is used to create system scoped state variables
+    # these can be accessed in any of the functions / actions of the roles
+    documentService = DocumentService()
+    # use a fifo queue for now
+    # when we introduce the idea of partitioning the queue on document id
+    # we will have to represent the different queue partitions somehow
+    # it may be useful to make a map of lists and maintain offsets for each
+    # consumer instead of deleting from the queue
+    fifoQueue = NonBlockingFifo(MessageProxyService())
+    users = ["a", "b", "c"]
+    documents = ["1", "2", "3"]
+
+# always assertion NoPermissionsOnMissingDoc:
+#     return none([permissionDocId not in DocumentService.documents for permissionDocId, permissions in DocumentService.permissions])
+
+# how do I model lost writes? I want to make sure that updates to the permission are eventually reflected? this is a liveness guarantee
+
+# use safety guarantee to indicate that there should be no way that a client can connect to a document that they do not
+# have permissions on
+# safety guarantees are created using the the always keyword
+
+# use liveness guarantee to indicate that if a client looses permissions on a document they should be eventually disconnected
+# liveness guarantees are created using the eventually keyword
+# use either always eventually: indicates that given some amount of time the behavior will reach the desired state
+always eventually assertion RevokedClientsWillBeDisconnected:
+    # all of the connections correspond to valid permissions
+    return all([documentId in documentService.permissions and userId in documentService.permissions[documentId] for documentId, userId in fifoQueue.connections])
+# or eventually always: indicates that the behavior will reach the desired state and stay there

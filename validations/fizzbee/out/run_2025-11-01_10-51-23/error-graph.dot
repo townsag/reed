@@ -1,0 +1,402 @@
+digraph G {
+    "0" [label="yield
+Actions: 0, Forks: 0
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "1" [label="DocumentService#0.CreateDocument
+Actions: 1, Forks: 1
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "0" -> "1" [label="1: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "2" [label="yield
+Actions: 1, Forks: 2
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "1" -> "2" [label="2: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "3" [label="DocumentService#0.CreateDocument
+Actions: 2, Forks: 3
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "2" -> "3" [label="3: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "4" [label="yield
+Actions: 2, Forks: 4
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "3" -> "4" [label="4: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "5" [label="DocumentService#0.CreateDocument
+Actions: 3, Forks: 5
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "4" -> "5" [label="5: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "6" [label="yield
+Actions: 3, Forks: 6
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "5" -> "6" [label="6: Any:documentId=\"3\"", color="black" penwidth="1"];
+    "7" [label="DocumentService#0.CreatePermission
+Actions: 4, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "6" -> "7" [label="7: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "8" [label="Any:documentId=\"1\"
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "7" -> "8" [label="8: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "9" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "8" -> "9" [label="9: Any:userId=\"a\"", color="black" penwidth="1"];
+    "10" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "9" -> "10" [label="10: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "11" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "10" -> "11" [label="11: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "12" [label="DocumentService#0.CreateDocument
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "11" -> "12" [label="12: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "13" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\", \"2\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "12" -> "13" [label="13: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "14" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\", \"2\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "13" -> "14" [label="14: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "15" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "14" -> "15" [label="15: Any:documentId=\"3\"", color="black" penwidth="1"];
+    "16" [label="DocumentService#0.CreatePermission
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "15" -> "16" [label="16: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "17" [label="Any:documentId=\"1\"
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "16" -> "17" [label="17: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "18" [label="yield
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"a\", \"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "17" -> "18" [label="18: Any:userId=\"b\"", color="black" penwidth="1"];
+    "19" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"a\", \"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "18" -> "19" [label="19: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "20" [label="yield
+Actions: 3, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\", \"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "19" -> "20" [label="20: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "21" [label="DocumentService#0.DeleteDocument
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\", \"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "20" -> "21" [label="21: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "22" [label="yield
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True), (\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "21" -> "22" [label="22: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "23" [label="ReceivePermissionUpdate
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True), (\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "22" -> "23" [label="23: ReceivePermissionUpdate", color="forestgreen" penwidth="3"];
+    "24" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "23" -> "24" [label="24: Stmt:0", color="forestgreen" penwidth="3"];
+    "25" [label="DocumentService#0.CreateDocument
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "24" -> "25" [label="25: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "26" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "25" -> "26" [label="26: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "27" [label="DocumentService#0.CreatePermission
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "26" -> "27" [label="27: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "28" [label="Any:documentId=\"1\"
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "27" -> "28" [label="28: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "29" [label="yield
+Actions: 4, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "28" -> "29" [label="29: Any:userId=\"a\"", color="black" penwidth="1"];
+    "30" [label="ReceivePermissionUpdate
+Actions: 5, Forks: 12
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "29" -> "30" [label="30: ReceivePermissionUpdate", color="forestgreen" penwidth="3"];
+    "31" [label="yield
+Actions: 2, Forks: 5
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "30" -> "31" [label="31: Stmt:0", color="forestgreen" penwidth="3"];
+    "32" [label="DocumentService#0.CreatePermission
+Actions: 3, Forks: 6
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "31" -> "32" [label="32: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "33" [label="Any:documentId=\"1\"
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "32" -> "33" [label="33: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "34" [label="yield
+Actions: 3, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\", \"c\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "33" -> "34" [label="34: Any:userId=\"c\"", color="black" penwidth="1"];
+    "35" [label="DocumentService#0.DeleteDocument
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\", \"c\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "34" -> "35" [label="35: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "36" [label="yield
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True), (\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "35" -> "36" [label="36: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "37" [label="ReceivePermissionUpdate
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True), (\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "36" -> "37" [label="37: ReceivePermissionUpdate", color="forestgreen" penwidth="3"];
+    "38" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "37" -> "38" [label="38: Stmt:0", color="forestgreen" penwidth="3"];
+    "39" [label="DocumentService#0.CreateDocument
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "38" -> "39" [label="39: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "40" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "39" -> "40" [label="40: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "41" [label="DocumentService#0.CreatePermission
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "40" -> "41" [label="41: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "42" [label="Any:documentId=\"1\"
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "41" -> "42" [label="42: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "43" [label="yield
+Actions: 4, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "42" -> "43" [label="43: Any:userId=\"a\"", color="black" penwidth="1"];
+    "44" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 12
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "43" -> "44" [label="44: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "45" [label="yield
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True), (\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "44" -> "45" [label="45: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "46" [label="ReceivePermissionUpdate
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"c\", True), (\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "45" -> "46" [label="46: ReceivePermissionUpdate", color="forestgreen" penwidth="3"];
+    "47" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "46" -> "47" [label="47: Stmt:0", color="forestgreen" penwidth="3"];
+    "48" [label="DocumentService#0.CreateDocument
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "47" -> "48" [label="48: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "49" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "48" -> "49" [label="49: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "50" [label="DocumentService#0.CreatePermission
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "49" -> "50" [label="50: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "51" [label="Any:documentId=\"1\"
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "50" -> "51" [label="51: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "52" [label="yield
+Actions: 4, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "51" -> "52" [label="52: Any:userId=\"b\"", color="black" penwidth="1"];
+    "53" [label="ReceivePermissionUpdate
+Actions: 5, Forks: 12
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "52" -> "53" [label="53: ReceivePermissionUpdate", color="forestgreen" penwidth="3"];
+    "54" [label="yield
+Actions: 2, Forks: 5
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "53" -> "54" [label="54: Stmt:0", color="forestgreen" penwidth="3"];
+    "55" [label="DocumentService#0.CreateDocument
+Actions: 3, Forks: 6
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "54" -> "55" [label="55: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "56" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "55" -> "56" [label="56: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "57" [label="DocumentService#0.CreateDocument
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "56" -> "57" [label="57: DocumentService#0.CreateDocument", color="black" penwidth="1"];
+    "58" [label="yield
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "57" -> "58" [label="58: Any:documentId=\"3\"", color="black" penwidth="1"];
+    "59" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"2\", \"3\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "58" -> "59" [label="59: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "60" [label="yield
+Actions: 3, Forks: 7
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "59" -> "60" [label="60: Any:documentId=\"2\"", color="black" penwidth="1"];
+    "61" [label="DocumentService#0.CreatePermission
+Actions: 4, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "60" -> "61" [label="61: DocumentService#0.CreatePermission", color="black" penwidth="1"];
+    "62" [label="Any:documentId=\"1\"
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"b\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "61" -> "62" [label="62: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "63" [label="yield
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "62" -> "63" [label="63: Any:userId=\"a\"", color="black" penwidth="1"];
+    "64" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\", \"3\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "63" -> "64" [label="64: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "65" [label="yield
+Actions: 3, Forks: 8
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "64" -> "65" [label="65: Any:documentId=\"3\"", color="black" penwidth="1"];
+    "66" [label="MessageProxyService#0.Connect
+Actions: 4, Forks: 9
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "65" -> "66" [label="66: MessageProxyService#0.Connect", color="black" penwidth="1"];
+    "67" [label="Any:documentId=\"1\"
+Actions: 4, Forks: 10
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "66" -> "67" [label="67: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "68" [label="yield
+Actions: 4, Forks: 11
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="green" penwidth="2" ];
+    "67" -> "68" [label="68: Any:userId=\"a\"", color="black" penwidth="1"];
+    "69" [label="yield
+Actions: 4, Forks: 12
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([(\"1\", \"a\")])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="green" penwidth="2" ];
+    "68" -> "69" [label="69: thread-0", color="black" penwidth="1"];
+    "70" [label="DocumentService#0.DeleteDocument
+Actions: 5, Forks: 13
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([\"1\"]), permissions = {\"1\": set([\"b\", \"a\"])}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([(\"1\", \"a\")])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "69" -> "70" [label="70: DocumentService#0.DeleteDocument", color="black" penwidth="1"];
+    "71" [label="yield
+Actions: 5, Forks: 14
+State: {\"documentService\":\"role DocumentService#0 (fields(documents = set([]), permissions = {}))\",\"documents\":\"[\"1\", \"2\", \"3\"]\",\"fifoQueue\":\"[(\"1\", \"b\", True), (\"1\", \"a\", True)]\",\"messageProxyService\":\"role MessageProxyService#0 (fields(connections = set([(\"1\", \"a\")])))\",\"users\":\"[\"a\", \"b\", \"c\"]\"}
+", color="black" penwidth="2" ];
+    "70" -> "71" [label="71: Any:documentId=\"1\"", color="black" penwidth="1"];
+    "71" -> "71" [label="72: stutter", color="black" penwidth="1"];
+}

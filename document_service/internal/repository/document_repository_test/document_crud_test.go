@@ -1,9 +1,12 @@
 package document_repository_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/townsag/reed/document_service/internal/repository"
+	"github.com/townsag/reed/document_service/internal/service"
 )
 
 // ========== Document CRUD tests ========== //
@@ -84,5 +87,99 @@ func TestCreateDeleteDocumentIntegration(t *testing.T) {
 	_, err = documentRepo.GetDocument(t.Context(), documentId)
 	if err == nil {
 		t.Errorf("failed to delete document, want a not found error, got: %v", err)
+	}
+}
+
+func TestGetDocument_NotFound_Integration(t *testing.T) {
+	// create a document repository object that has a connection to the
+	// testing postgres instance
+	documentRepository := createTestingDocumentRepo(t)
+	// call get document on a document that does not exist
+	_, err := documentRepository.GetDocument(
+		t.Context(), uuid.New(),
+	)
+	if err == nil {
+		t.Fatalf(
+			"expected an error when calling get document on a document that " +
+			"does not exist but got nil instead",
+		)
+	} else {
+		var target *service.NotFoundError
+		if !errors.As(err, &target) {
+			t.Errorf(
+				"got the wrong kind of error when getting a document that does " +
+				"not exist, want a not found error, got: %v", err,
+			)
+		}
+	}
+}
+
+func TestUpdateDocument_NotFound_Integration(t *testing.T) {
+	// create a document repository object that has a connection to the
+	// testing postgres instance
+	documentRepository := createTestingDocumentRepo(t)
+	// call update document on a document that does not exist
+	name := "howdy partner"
+	err := documentRepository.UpdateDocument(
+		t.Context(), uuid.New(), &name, nil,
+	)
+	if err == nil {
+		t.Fatalf(
+			"expected an error when calling update document on a document that " +
+			"does not exist but got nil instead",
+		)
+	} else {
+		var target *service.NotFoundError
+		if !errors.As(err, &target) {
+			t.Errorf(
+				"got the wrong kind of error when getting a document that does " +
+				"not exist, want a not found error, got: %v", err,
+			)
+		}
+	}
+}
+
+func TestDeleteDocument_NotFound_Integration(t *testing.T) {
+	// create a document repository object that has a connection to the
+	// testing postgres instance
+	documentRepository := createTestingDocumentRepo(t)
+	// call delete document on a document that does not exist
+	err := documentRepository.DeleteDocument(
+		t.Context(), uuid.New(),
+	)
+	if err == nil {
+		t.Fatalf(
+			"expected an error when calling delete document on a document that " +
+			"does not exist but got nil instead",
+		)
+	} else {
+		var target *service.NotFoundError
+		if !errors.As(err, &target) {
+			t.Errorf(
+				"got the wrong kind of error when deleting a document that does " +
+				"not exist, want a not found error, got: %v", err,
+			)
+		}
+	}
+}
+
+func TestUpdateDocument_NilInputs_Unit(t *testing.T) {
+	// create a document repository that does not have a connection to a 
+	// testing database
+	documentRepo := &repository.DocumentRepository{}
+	// call update document with nil inputs
+	err := documentRepo.UpdateDocument(
+		t.Context(), uuid.New(), nil, nil,
+	)
+	if err == nil {
+		t.Fatalf("expected an error when calling update document with nil inputs but got nil instead")
+	} else {
+		var target *service.InvalidInputError
+		if !errors.As(err, &target) {
+			t.Errorf(
+				"got the wrong kind of error when calling update doc with nil inputs " +
+				"want an invalid input error, got: %v", err, 
+			)
+		}
 	}
 }

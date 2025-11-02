@@ -22,7 +22,7 @@ Testing strategy:
 - [ ] guest crud testing:
 	- [ ] verify that deleting a document deletes the guests that had permission on that document
 	- [ ] verify that deleting a guests permission on a document also deletes the guest? should we do this... probably
-- [ ] verify that that for each method of observing mutations on permissions, the methods for observing mutations can observe each type of mutation
+- [x] verify that that for each method of observing mutations on permissions, the methods for observing mutations can observe each type of mutation
 	- [x] ListDocumentsByPrincipal flows:
 		- [x] create document -> view document and permission in list by user id -> delete document -> view that the document is deleted / missing in the list by user id
 		- [x] create document -> view document and permission in list by user id -> delete permissions of user on document -> view that the document is missing in the list by user id
@@ -46,29 +46,29 @@ Testing strategy:
 		- [x] create a document -> share the document with user -> verify the user has permissions on doc -> delete the permissions of user on document -> verify that the permissions have been deleted
 		- [x] create a document -> share the document with a guest -> verify the guest has permissions on doc -> delete the permissions of guest on doc -> verify that guest no longer has permissions on doc
 - [ ] verify the failure not found cases for all the methods of making mutations and observing mutations
-	- [ ] GetDocument:
-		- [ ] calling get document on a document that doesn't exist returns an error
-	- [ ] UpdateDocument:
-		- [ ] calling update document on a document that doesn't exist returns an error
-	- [ ] DeleteDocument:
-		- [ ] calling delete document on a document that does not exist returns an error
+	- [x] GetDocument:
+		- [x] calling get document on a document that doesn't exist returns an error
+	- [x] UpdateDocument:
+		- [x] calling update document on a document that doesn't exist returns an error
+	- [x] DeleteDocument:
+		- [x] calling delete document on a document that does not exist returns an error
 	- [x] GetPermissionOfPrincipalOnDocument:
 		- [x] calling get permissions of principal on doc with an invalid doc id returns a not found error
 	- [x] ListPermissionsOnDocument
 		- [x] calling list permissions on doc with a missing doc id returns a not found error
-	- [ ] CreateGuest
-		- [ ] calling create guest with a document id that does not exist returns a not found error
-	- [ ] UpsertPermissionsUser
-		- [ ] calling upsert permission user on a document that does not exist returns an error
-	- [ ] UpdatePermissionGuest
-		- [ ] calling update permissions guest on a guest that does not exist returns a not found error
-		- [ ] calling update permissions guest on a document that does not exist returns a not found error
-	- [ ] DeletePermissionsPrincipal
-		- [ ] calling delete permissions principal on a combination of principal and document that does not exist returns a not found error
+	- [x] CreateGuest
+		- [x] calling create guest with a document id that does not exist returns a not found error
+	- [x] UpsertPermissionsUser
+		- [x] calling upsert permission user on a document that does not exist returns an error
+	- [x] UpdatePermissionGuest
+		- [x] calling update permissions guest on a guest that does not exist returns a not found error
+		- [x] calling update permissions guest on a document that does not exist returns a not found error
+	- [x] DeletePermissionsPrincipal
+		- [x] calling delete permissions principal on a combination of principal and document that does not exist returns a not found error
 - [ ] input validation checks:
-	- [ ] UpdateDocument:
-		- [ ] calling update document with no non-nil inputs returns an error
-	- [ ] ListDocumentsByPrincipal
+	- [x] UpdateDocument:
+		- [x] calling update document with no non-nil inputs returns an error
+	- [x] ListDocumentsByPrincipal
 		- [x] calling list docs by principal with an invalid cursor returns an error
 		- [x] calling list docs by principal with an invalid permission set returns an error
 			- [x] empty list

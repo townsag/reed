@@ -243,7 +243,7 @@ func (dr *DocumentRepository) UpdateDocument(
 	documentDescription *string,
 ) error {
 	if documentName == nil && documentDescription == nil {
-		return nil
+		return service.InvalidInput("at least of of name or description must be non nil", nil)
 	}
 	params := sqlc.UpdateDocumentParams{
 		ID: pgtype.UUID{ Bytes: documentId, Valid: true },
@@ -520,26 +520,6 @@ func (dr *DocumentRepository) GetPermissionOfPrincipalOnDocument(
 	return repoToServicePermission(row)
 }
 
-// call the relevant list permissions on document helper function with the correct cursor input
-// parse service permissions objects from the sqlc permission objects
-// create a response cursor
-// return the parsed permissions and the cursor
-// func (dr *DocumentRepository) readPermissions(
-// 	ctx context.Context,
-
-// )
-
-/*
-CHECKPOINT:
-- you were modifying the sql queries so that they were paginated for listing permissions by document id
-  using either the created at or the last modified at fields as sort keys in descending order with the
-  recipientID as the tiebreaker
-	- this works because we are always searching on the document id
-	- might be worth it to just make two cursor objects then?
-	- the trade off is code duplication for readability? I think the code duplication is minimal so
-	  it is worth it
-- after that you were going to change the repo implementation to be paginated and return a cursor
-*/
 func readPermissions(
 	ctx context.Context,
 	txQueries *sqlc.Queries,
@@ -678,13 +658,32 @@ func (dr *DocumentRepository) CreateGuest(
 			err,
 		)
 	}
+	/*
+	- explicitly check if the document exists at the beginning of the transaction
+		- if the document does not exist, return a not found error
+		- this is preferable to parsing the foreign key missing error that we would get
+		  for inserting a guest to an invalid document because we know the error explicitly
+		  instead of guessing at the foreign key that is missing
+	*/
 	// get a transaction
-	tx, err := dr.pool.Begin(ctx)
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{ IsoLevel: pgx.RepeatableRead })
 	if err != nil {
 		return uuid.Nil, service.RepoImpl("failed to create a transaction when creating a guest", err)
 	}
 	defer tx.Rollback(ctx)
 	txQueries := dr.queries.WithTx(tx)
+	// query the documents table to see if the document exists
+	_, err = txQueries.GetDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, service.NotFound(
+				fmt.Sprintf("the document with id: %v was not found", documentId.String()),
+				err,
+			)
+		} else {
+			return uuid.Nil, service.RepoImpl("failed to validate document id with database error", err)
+		}
+	}
 	// add a new guest to the guests table
 	params := sqlc.CreateGuestParams{
 		ID: pgtype.UUID{ Bytes: guestId, Valid: true },
@@ -755,15 +754,49 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 			err,
 		)
 	}
+	/*
+	CHECKPOINT:
+	- you were here
+	- update this function to verify that the document exists before trying to create
+	  a permission for a user on that document
+		- create a transaction at repeatable read level
+			- the guarantees that if we read that the document exists at the beginning
+			  of the transaction then the document will still exist at the end of the
+			  transaction
+		- check if the document exists
+		- if not, return a not found error
+	*/
+	tx, err := dr.pool.BeginTx(ctx, pgx.TxOptions{ IsoLevel: pgx.RepeatableRead })
+	if err != nil {
+		return service.RepoImpl("failed to create a transaction when creating a guest", err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := dr.queries.WithTx(tx)
+	// query the documents table to see if the document exists
+	_, err = txQueries.GetDocument(ctx, pgtype.UUID{ Bytes: documentId, Valid: true })
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.NotFound(
+				fmt.Sprintf("the permission on document %v cannot be updated because it is not found", documentId.String()),
+				err,
+			)
+		} else {
+			return service.RepoImpl("failed to validate that this document exists", err)
+		}
+	}
 	params := sqlc.UpsertPermissionUserParams{
 		RecipientID: pgtype.UUID{ Bytes: userId, Valid: true },
 		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
 		PermissionLevel: repoPermission,
 		CreatedBy: pgtype.UUID{ Bytes: userId, Valid: true },
 	}
-	err = dr.queries.UpsertPermissionUser(ctx, params)
+	err = txQueries.UpsertPermissionUser(ctx, params)
 	if err != nil {
 		return service.RepoImpl("failed to update user permission", err)
+	}
+	err = tx.Commit(ctx)
+	if err != nil {
+		return service.RepoImpl("failed to commit transaction", err)
 	}
 	return nil
 }

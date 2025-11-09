@@ -83,6 +83,9 @@ INSERT INTO permissions (
     recipient_id, recipient_type, document_id, permission_level, created_by
 ) VALUES ($1, 'guest', $2, $3, $4);
 
+-- name: SelectGuest :one
+SELECT * FROM guests 
+WHERE id = $1;
 
 -- name: UpdatePermissionGuest :execrows
 UPDATE permissions SET

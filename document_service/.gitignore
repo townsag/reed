@@ -1,2 +1,3 @@
 internal/repository/sqlc/db
 coverage.out
+*.pb.go

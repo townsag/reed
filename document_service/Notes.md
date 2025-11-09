@@ -1,5 +1,6 @@
 ## TODO:
 - create a gRPC server which serves state about documents
+  - this is dependant on updating the user server to use uuid to store user id instead of int32
 - decide on a domain model for what information is stored by the document service:
     - Decided:
         - document metadata like
@@ -18,7 +19,7 @@
         - requires partition aware routing
         - can only scale to as many instances as we have partitions 
 - update the uuid generation code to handle errors when generating uuids instead of panicking
-- update the document repository interface to return both Permission and PermissionLevel types when calling list permissions on document:
+- [x] update the document repository interface to return both Permission and PermissionLevel types when calling list permissions on document:
   - Permission is a struct with metadata about the permission including the recipient type and the permission level
   - PermissionLevel is just the permission level itself
 - update the repo creation process so that custom types are registered with the pgx postgres client library at repo creation time instead of at postgres connection creation time

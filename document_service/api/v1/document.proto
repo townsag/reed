@@ -35,7 +35,7 @@ message Cursor {
     // reserved 1;
     // reserved "sort_field";
     SortField sort_field = 1;
-    optional string last_seen_value = 2;
+    optional google.protobuf.Timestamp last_seen_time = 2;
     optional string last_seen_document_id = 3;
     
     enum SortField {
@@ -102,7 +102,7 @@ message DeleteDocumentRequest {
 
 message ListDocumentByPrincipalRequest {
     Principal recipient = 1;
-    repeated PermissionLevel permission_filter = 2;
+    repeated PermissionLevel permissions_filter = 2;
     // ^these are the permission levels for which you want to see documents that the given 
     // principal has access to
     optional Cursor cursor = 3;
@@ -119,7 +119,7 @@ message ListDocumentsByPrincipalReply {
 
     message DocumentPermission {
         Document document = 1;
-        PermissionLevel permission = 2;
+        PermissionLevel permission_level = 2;
     }
 }
 
@@ -140,22 +140,15 @@ message ListPermissionsOnDocumentRequest {
 }
 
 message ListPermissionsOnDocumentReply {
-    repeated RecipientPermission recipient_permissions = 1;
+    repeated Permission recipient_permissions = 1;
     Cursor cursor = 2;
-
-    message RecipientPermission {
-        Principal recipient = 1;
-        Permission Permission = 2;
-        google.protobuf.Timestamp created_at = 3;
-        google.protobuf.Timestamp last_modified_at = 4;
-    }
 }
 
 message CreateGuestRequest {
     string document_id = 1;
-    int32 user_id = 2;
+    string user_id = 2;
     // ^user that created the Guest
-    PermissionLevel permission = 3;
+    PermissionLevel permission_level = 3;
 }
 
 message CreateGuestReply {
@@ -163,9 +156,9 @@ message CreateGuestReply {
 }
 
 message UpsertPermissionUserRequest {
-    int32 user_id = 1;
+    string user_id = 1;
     string document_id = 2;
-    PermissionLevel permission = 3;
+    PermissionLevel permission_level = 3;
 }
 
 message UpdatePermissionGuestRequest {
@@ -174,7 +167,7 @@ message UpdatePermissionGuestRequest {
     // take a document id here, or we would have to validate it against the document
     // id in the database. Taking a document id here gives the impression to the 
     // calling code that they can associate the guest with arbitrary documents
-    PermissionLevel permission = 3;
+    PermissionLevel permission_level = 3;
 }
 
 message DeletePermissionsPrincipalRequest {

@@ -11,8 +11,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	configPkg "github.com/townsag/reed/document_service/internal/config"
 	"github.com/townsag/reed/document_service/internal/repository"
-	"github.com/townsag/reed/document_service/internal/repository/sqlc"
 )
 
 
@@ -72,7 +72,7 @@ func setupPostgresContainer() (*pgxpool.Pool, error) {
 				pgErr = fmt.Errorf("failed to parse connection string: %w", pgErr)
 				return
 			}
-			config.AfterConnect = sqlc.RegisterTypes
+			config.AfterConnect = configPkg.RegisterTypes
 			testPool, pgErr = pgxpool.NewWithConfig(ctx, config)
 			if pgErr != nil {
 				pgErr = fmt.Errorf("unable to create a connection pool: %w", pgErr)

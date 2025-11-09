@@ -1,15 +1,16 @@
 package service
 
 import (
-	"time"
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/townsag/reed/user_service/internal/config"
 )
 
 type User struct {
-	UserId int32
+	UserId uuid.UUID
 	UserName string
 	Email string
 	MaxDocuments int32
@@ -23,15 +24,15 @@ type User struct {
 // the repository object has to conform to. This allows multiple repos
 // to implement the UserRepository interface
 type UserRepository interface {
-	CreateUser(ctx context.Context, userName string, email string, maxDocuments int32, password string) (userId int32, err error)
-	GetUserById(ctx context.Context, userId int32) (*User, error)
+	CreateUser(ctx context.Context, userName string, email string, maxDocuments int32, password string) (userId uuid.UUID, err error)
+	GetUserById(ctx context.Context, userId uuid.UUID) (*User, error)
 	GetUserByEmail(ctx context.Context, userEmail string) (*User, error)
-	DeactivateUser(ctx context.Context, userId int32) (error)
+	DeactivateUser(ctx context.Context, userId uuid.UUID) (error)
 	// push the responsibility for hashing passwords down to the repository layer, the user service
 	// just deals in plaintext passwords. This makes the interactions between the service and the 
 	// repository cleaner because the service does not have to hold an interactive transaction in 
 	// case another process changes the users password while the service is validating it
-	ModifyPassword(ctx context.Context, userId int32, oldPassword string, newPassword string) (error)
+	ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) (error)
 }
 
 // in the case of repositories, we wanted to be able to swap out multiple different repository
@@ -60,9 +61,9 @@ func NewUserService(repo UserRepository) *UserService {
 // interfaces to pass between the server and the service layer and prevents the service layer from being
 // aware of gRPC specific structs
 
-func (us *UserService) CreateUser(ctx context.Context, userName string, email string, maxDocuments *int32, password string) (int32, error) {
+func (us *UserService) CreateUser(ctx context.Context, userName string, email string, maxDocuments *int32, password string) (uuid.UUID, error) {
 	if len(userName) < config.MinUsernameLength {
-		return 0, Invalid(
+		return uuid.Nil, Invalid(
 			fmt.Sprintf("username: <%s> did not match the min username length constraint: %d", userName, config.MinUsernameLength),
 			nil,
 		)
@@ -70,7 +71,7 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 	// TODO: validate the email using regex, etc.
 	// TODO: create a sign-up flow that requires clicking a link in their inbox
 	if len(password) < config.MinPasswordLength {
-		return 0, Invalid(
+		return uuid.Nil, Invalid(
 			fmt.Sprintf("password: <%s> did not match the min password length constraint: %d", password, config.MinPasswordLength),
 			nil,
 		)
@@ -89,13 +90,13 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unknown error creating user", err)
 		}
-		return 0, err
+		return uuid.Nil, err
 	} else {
 		return userId, nil
 	}
 }
 
-func (us *UserService) GetUser(ctx context.Context, userId int32) (*User, error) {
+func (us *UserService) GetUser(ctx context.Context, userId uuid.UUID) (*User, error) {
 	user, err := us.repo.GetUserById(ctx, userId)
 	if err != nil {
 		if _, ok := err.(DomainError); !ok {
@@ -108,7 +109,7 @@ func (us *UserService) GetUser(ctx context.Context, userId int32) (*User, error)
 }
 
 // calls to deactivate a user are like an upsert, if the user has already been deactivated they have no effect
-func (us *UserService) DeactivateUser(ctx context.Context, userId int32) error {
+func (us *UserService) DeactivateUser(ctx context.Context, userId uuid.UUID) error {
 	err := us.repo.DeactivateUser(ctx, userId)
 	if err != nil {
 		if _, ok := err.(DomainError); !ok {
@@ -118,7 +119,7 @@ func (us *UserService) DeactivateUser(ctx context.Context, userId int32) error {
 	return err
 }
 
-func (us *UserService) ChangePassword(ctx context.Context, userId int32, oldPassword string, newPassword string) error {
+func (us *UserService) ChangePassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) error {
 	// TODO: add regex validation of the password
 	err := us.repo.ModifyPassword(ctx, userId, oldPassword, newPassword)
 	if err != nil {

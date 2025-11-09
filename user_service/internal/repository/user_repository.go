@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,7 +14,6 @@ import (
 
 	sqlc "github.com/townsag/reed/user_service/internal/repository/sqlc/db"
 	"github.com/townsag/reed/user_service/internal/service"
-
 )
 
 // TODO: figure out what the logging story is for the repo object?
@@ -37,7 +37,7 @@ func NewUserRepository(conn *pgxpool.Pool) *UserRepository {
 // sqlc code to the user struct defined in the service package here
 func serviceToRepository(user service.User) *sqlc.User {
 	return &sqlc.User{
-		ID: user.UserId,
+		ID: pgtype.UUID{ Bytes: user.UserId, Valid: true },
 		UserName: user.UserName,
 		Email: user.Email,
 		MaxDocuments: pgtype.Int4{ Int32: int32(user.MaxDocuments), Valid: true },
@@ -50,7 +50,7 @@ func serviceToRepository(user service.User) *sqlc.User {
 
 func repositoryToService(user sqlc.User) *service.User {
 	return &service.User{
-		UserId: user.ID,
+		UserId: uuid.UUID(user.ID.Bytes),
 		UserName: user.UserName,
 		Email: user.Email,
 		MaxDocuments: user.MaxDocuments.Int32,
@@ -67,41 +67,43 @@ func (r *UserRepository) CreateUser(
 	email string,
 	maxDocuments int32, 
 	password string,
-) (userId int32, err error) {
+) (uuid.UUID, error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return 0, service.RepoImpl("error creating hash of users new password", err)
+		return uuid.Nil, service.RepoImpl("error creating hash of users new password", err)
 	}
-	params := sqlc.CreateUserAndReturnIdParams{
+	userId := uuid.New()
+	params := sqlc.CreateUserParams{
+		ID: pgtype.UUID{ Bytes: userId, Valid: true },
 		UserName: userName,
 		Email: email,
 		MaxDocuments: pgtype.Int4{ Int32: maxDocuments, Valid: true },
 		HashedPassword: string(hashedPassword),
 	}
-	userId, err = r.queries.CreateUserAndReturnId(ctx, params)
+	err = r.queries.CreateUser(ctx, params)
 	if err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) {
 			// parse the error code here and determine a semantic error type
 			// unique conflict
 			if pgError.Code == "23505" {
-				return 0, service.UniqueConflict(
+				return uuid.Nil, service.UniqueConflict(
 					fmt.Sprintf("constraint: %s, detail: %s", pgError.ConstraintName, pgError.Detail), 
 					err,
 				)
 			} else {
 				// db implementation error
-				return 0, service.RepoImpl(pgError.Error(), pgError)
+				return uuid.Nil, service.RepoImpl(pgError.Error(), pgError)
 			}
 		} else {
-			return 0, service.RepoImpl("unknown error encountered when creating user", err)
+			return uuid.Nil, service.RepoImpl("unknown error encountered when creating user", err)
 		}
 	}
 	return userId, nil
 }
 
-func (r *UserRepository) GetUserById(ctx context.Context, userId int32) (*service.User, error) {
-	user, err := r.queries.GetUserById(ctx, userId)
+func (r *UserRepository) GetUserById(ctx context.Context, userId uuid.UUID) (*service.User, error) {
+	user, err := r.queries.GetUserById(ctx, pgtype.UUID{ Bytes: userId, Valid: true })
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, service.NotFound(fmt.Sprintf("No user found for userId: %d", userId))
@@ -124,8 +126,8 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, userEmail string) (
 	return repositoryToService(user), nil
 }
 
-func (r *UserRepository) DeactivateUser (ctx context.Context, userId int32) error {
-	_, err := r.queries.DeactivateUser(ctx, userId)
+func (r *UserRepository) DeactivateUser (ctx context.Context, userId uuid.UUID) error {
+	_, err := r.queries.DeactivateUser(ctx, pgtype.UUID{ Bytes: userId, Valid: true })
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return service.NotFound(fmt.Sprintf("No user found with userId: %d to deactivate", userId))
@@ -136,7 +138,7 @@ func (r *UserRepository) DeactivateUser (ctx context.Context, userId int32) erro
 	return nil
 }
 
-func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, oldPassword string, newPassword string) error {
+func (r *UserRepository) ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) error {
 	// create a transaction
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -148,7 +150,7 @@ func (r *UserRepository) ModifyPassword(ctx context.Context, userId int32, oldPa
 	defer tx.Rollback(ctx)
 	txQueries := r.queries.WithTx(tx)
 	// read the password associated with this user
-	user, err := txQueries.GetUserForUpdate(ctx, userId)
+	user, err := txQueries.GetUserForUpdate(ctx, pgtype.UUID{ Bytes: userId, Valid: true })
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return service.NotFound(fmt.Sprintf("No user found with userId: %d to update", userId))

@@ -12,7 +12,7 @@ func TestUpsertPermissionUser_DocumentNotFound_Integration(t *testing.T) {
 	// create a document repo struct with access to the testing postgres instance
 	documentRepo := createTestingDocumentRepo(t)
 	// call upsert permission user on a document that does not exist
-	err := documentRepo.UpsertPermissionsUser(t.Context(), uuid.New(), uuid.New(), service.Editor)
+	err := documentRepo.UpsertPermissionUser(t.Context(), uuid.New(), uuid.New(), service.Editor)
 	// validate that the returned error is a not found error
 	if err == nil {
 		t.Fatalf(
@@ -35,12 +35,12 @@ func TestUpdatePermissionGuest_GuestNotFound_Integration(t *testing.T) {
 	// create a user
 	userId := uuid.New()
 	// create a document with that user
-	documentId, err := documentRepo.CreateDocument(t.Context(), userId, nil, nil)
+	_, err := documentRepo.CreateDocument(t.Context(), userId, nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create document with error: %v", err)
 	}
 	// update the permission of a guest that does not exist on that document
-	err = documentRepo.UpdatePermissionGuest(t.Context(), uuid.New(), documentId, service.Viewer)
+	err = documentRepo.UpdatePermissionGuest(t.Context(), uuid.New(), service.Viewer)
 	// verify that the returned error is of the correct type
 	if err == nil {
 		t.Fatal(
@@ -62,7 +62,7 @@ func TestUpdatePermissionGuest_DocumentNotFound_Integration(t *testing.T) {
 	// create a document repo struct with access to the testing postgres instance
 	documentRepo := createTestingDocumentRepo(t)
 	// call update permission guest on a document that does not exist
-	err := documentRepo.UpdatePermissionGuest(t.Context(), uuid.New(), uuid.New(), service.Viewer)
+	err := documentRepo.UpdatePermissionGuest(t.Context(), uuid.New(), service.Viewer)
 	// verify that the returned error is of the correct type
 	if err == nil {
 		t.Fatal(

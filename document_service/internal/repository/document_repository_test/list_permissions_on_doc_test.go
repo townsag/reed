@@ -21,7 +21,7 @@ func TestListPermissionsOnDocument_OnUser_DeleteDocumentPath_Integration(t *test
 		t.Fatalf("failed to create a document with error: %v", err)
 	}
 	// share that document with the recipient
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to share the document with the recipient with error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestListPermissionsOnDocument_OnUser_DeletePermissionPath_Integration(t *te
 	// create a dummy recipient user to share that document with
 	recipientId := uuid.New()
 	// share the document with the recipient 
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to add permission on user with error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestListPermissionsOnDocument_OnUser_UpdatePermissionPath_Integration(t *te
 	}
 	// share the document with the two recipient users
 	for _, recipientId := range []uuid.UUID{ recipientIdA, recipientIdB } {
-		err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Editor)
+		err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Editor)
 		if err != nil {
 			t.Fatalf("failed to share document with recipient with error: %v", err)
 		}
@@ -164,7 +164,7 @@ func TestListPermissionsOnDocument_OnUser_UpdatePermissionPath_Integration(t *te
 		)
 	}
 	// modify the permission of recipientA, this should change the order in which the permissions are returned
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientIdA, documentId, service.Viewer)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientIdA, documentId, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to update permissions on user with error: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestListPermissionsOnDocument_OnGuest_UpdatePermissionPath_Integration(t *t
 		)
 	}
 	// modify the permission of the guest
-	err = documentRepo.UpdatePermissionGuest(t.Context(), guestId, documentId, service.Viewer)
+	err = documentRepo.UpdatePermissionGuest(t.Context(), guestId, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to update permissions on user with error: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestListPermissionsOnDocument_PermissionFiltering_Integration(t *testing.T)
 	for i, recipientId := range []uuid.UUID{ recipientIdA, recipientIdB, recipientIdC } {
 		var pl service.PermissionLevel = service.Editor
 		if i == 2 { pl = service.Viewer }
-		err = documentRepo.UpsertPermissionsUser(
+		err = documentRepo.UpsertPermissionUser(
 			t.Context(), recipientId, documentId, pl,
 		)
 		if err != nil {

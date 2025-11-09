@@ -107,7 +107,7 @@ func TestListDocumentsByPrincipal_OnUser_DeletePermissionPath_Integration(t *tes
 	// create a dummy recipient user
 	recipientUserId := uuid.New()
 	// share the document with the recipient user
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientUserId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientUserId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to create a permission on a document with error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestListDocumentsByPrincipal_OnUser_UpdatePermissionPath_Integration(t *tes
 	// create a dummy recipient user
 	recipientUserId := uuid.New()
 	// share the document with the recipient user
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientUserId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientUserId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to create a permission on a document with error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestListDocumentsByPrincipal_OnUser_UpdatePermissionPath_Integration(t *tes
 		t.Fatalf("failed to retrieve the created document %s, got this list of document permissions: %v",documentId, documentPermissions)
 	}
 	// modify the recipient users permission on the document
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientUserId, documentId, service.Viewer)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientUserId, documentId, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to update permission on a document for the recipient user with error: %v", err)
 	}
@@ -444,11 +444,11 @@ func TestListDocumentsByPrincipal_PermissionFiltering_Integration(t *testing.T) 
 		t.Fatalf("failed to create document with error: %v", err)
 	}
 	// share the two documents with the recipient user at editor and viewer level
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientUserId, documentIdA, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientUserId, documentIdA, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to share document with user with error: %v", err)
 	}
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientUserId, documentIdB, service.Viewer)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientUserId, documentIdB, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to share document with user with error: %v", err)
 	}

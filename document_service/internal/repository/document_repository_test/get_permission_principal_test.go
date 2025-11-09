@@ -22,7 +22,7 @@ func TestGetPermissionOfPrincipalOnDocument_OnUser_UpdatePermissionPath_Integrat
 		t.Fatalf("failed to create a document with error: %v", err)
 	}
 	// share the document with the recipient
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to create permission on document with error: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestGetPermissionOfPrincipalOnDocument_OnUser_UpdatePermissionPath_Integrat
 		)
 	}
 	// update the permission of the recipient on the document
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Viewer)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to update permission of user on document with error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestGetPermissionOfPrincipalOnDocument_OnUser_DeletePermissionPath_Integrat
 		t.Fatalf("failed to create a document with error: %v", err)
 	}
 	// share the document with the recipient
-	err = documentRepo.UpsertPermissionsUser(t.Context(), recipientId, documentId, service.Editor)
+	err = documentRepo.UpsertPermissionUser(t.Context(), recipientId, documentId, service.Editor)
 	if err != nil {
 		t.Fatalf("failed to create permission on document with error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestGetPermissionOfPrincipalOnDocument_OnGuest_UpdatePermissionPath_Integra
 		)
 	}
 	// update the permission of the recipient on the document
-	err = documentRepo.UpdatePermissionGuest(t.Context(), guestId, documentId, service.Viewer)
+	err = documentRepo.UpdatePermissionGuest(t.Context(), guestId, service.Viewer)
 	if err != nil {
 		t.Fatalf("failed to update permission of guest on document with error: %v", err)
 	}

@@ -741,7 +741,7 @@ func (dr *DocumentRepository) CreateGuest(
 	return guestId, nil
 }
 
-func (dr *DocumentRepository) UpsertPermissionsUser(
+func (dr *DocumentRepository) UpsertPermissionUser(
 	ctx context.Context, 
 	userId uuid.UUID, 
 	documentId uuid.UUID, 
@@ -804,7 +804,6 @@ func (dr *DocumentRepository) UpsertPermissionsUser(
 func (dr *DocumentRepository) UpdatePermissionGuest(
 	ctx context.Context,
 	guestId uuid.UUID,
-	documentId uuid.UUID,
 	permissionLevel service.PermissionLevel,
 ) (err error) {
 	permissionRepo, err := serviceToRepoPermissionLevel(permissionLevel)
@@ -814,9 +813,31 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 			err,
 		)
 	}
+	// we dont need to create a transaction here because the expected behavior for the guest
+	// being deleted while we are making the update is a not found error. This will already happen
+	// because deleting the guest will delete its record from the 
+	// read the guest record from the guests table to find the document id
+	guest, err := dr.queries.SelectGuest(ctx, pgtype.UUID{ Bytes: guestId, Valid: true })
+	if err != nil {
+		// check the error type, return not found error for no rows returned 
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.NotFound(
+				fmt.Sprintf(
+					"unable to find a guest with guestId: %v",
+					guestId.String(),
+				), err,
+			)
+		} else {
+			// or repo implementation error otherwise
+			return service.RepoImpl("failed to read guest information", err)
+		}
+	}
+	// then update the permission associated with this guest
+	// reading the documentId here keeps the interface cleaner than it would be if the calling
+	// code could add an arbitrary documentId here
 	params := sqlc.UpdatePermissionGuestParams{
 		RecipientID: pgtype.UUID{ Bytes: guestId, Valid: true },
-		DocumentID: pgtype.UUID{ Bytes: documentId, Valid: true },
+		DocumentID: guest.DocumentID,
 		PermissionLevel: permissionRepo,
 	}
 	count, err := dr.queries.UpdatePermissionGuest(ctx, params)
@@ -828,7 +849,7 @@ func (dr *DocumentRepository) UpdatePermissionGuest(
 			fmt.Sprintf(
 				"unable to find permission of guest: %s on document: %s",
 				guestId.String(),
-				documentId.String(),
+				guest.DocumentID.String(),
 			),
 			nil,
 		)
@@ -841,6 +862,8 @@ func (dr *DocumentRepository) DeletePermissionsPrincipal(
 	recipientId uuid.UUID,
 	documentId uuid.UUID,
 ) (err error) {
+	// TODO: we should delete the guest from the guest table if we are deleting the permission
+	//		 of the guest on a document
 	// let the code at the service level decide if we should be able to delete the owner of 
 	// a documents permissions on that document. This business logic does not need to be
 	// enforced in two places

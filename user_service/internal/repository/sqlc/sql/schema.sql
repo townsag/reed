@@ -1,6 +1,6 @@
 CREATE TABLE users (
     -- id VARCHAR(32) PRIMARY KEY,
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY,
     user_name VARCHAR(32) NOT NULL UNIQUE,
     email TEXT NOT NULL UNIQUE,
     max_documents INTEGER DEFAULT 16,

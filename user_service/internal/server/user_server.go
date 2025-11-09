@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/google/uuid"
 	pb "github.com/townsag/reed/user_service/api"
 	"github.com/townsag/reed/user_service/internal/service"
 )
@@ -16,8 +17,8 @@ import (
 Responsibilities:
 - the server layer is responsible for handling:
 	- the routing of requests to the correct handler
-	- marshaling and unmarshaling of messages 
-	- authentication 
+	- marshaling and unmarshaling of messages
+	- authentication
 */
 
 type UserServiceServerImpl struct {
@@ -61,16 +62,18 @@ func (s *UserServiceServerImpl) GetUser(
 	ctx context.Context,
 	getUserReq *pb.GetUserRequest,
 ) (*pb.UserReply, error) {
-	if getUserReq.UserId == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "UserId is required, received: %d", getUserReq.UserId)
+	// parse the given userId
+	userId, err := uuid.Parse(getUserReq.UserId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", getUserReq.UserId)
 	}
-	user, err := s.userService.GetUser(ctx, getUserReq.UserId)
+	user, err := s.userService.GetUser(ctx, userId)
 	if err != nil {
 		return nil, serviceToGRPCError(err)
 	}
 	return &pb.UserReply{
 		User: &pb.User{
-			UserId: user.UserId,
+			UserId: user.UserId.String(),
 			UserName: user.UserName,
 			Email: user.Email,
 			MaxDocuments: user.MaxDocuments, 
@@ -100,7 +103,7 @@ func (s *UserServiceServerImpl) CreateUser(
 		return nil, serviceToGRPCError(err)
 	}
 	return &pb.CreateUserReply{
-		UserId: userId,
+		UserId: userId.String(),
 	}, nil
 }
 
@@ -108,10 +111,12 @@ func (s *UserServiceServerImpl) DeactivateUser(
 	ctx context.Context,
 	deactivateUserReq *pb.DeactivateUserRequest,
 ) (*emptypb.Empty, error) {
-	if deactivateUserReq.UserId == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "user_id is required, received: %d", deactivateUserReq.UserId)
+	// parse the user id
+	userId, err := uuid.Parse(deactivateUserReq.UserId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", deactivateUserReq.UserId)
 	}
-	err := s.userService.DeactivateUser(ctx, deactivateUserReq.UserId)
+	err = s.userService.DeactivateUser(ctx, userId)
 	if err != nil {
 		return nil, serviceToGRPCError(err)
 	}
@@ -129,10 +134,21 @@ func (s *UserServiceServerImpl) ChangePassword(
 	if changePasswordRequest.NewPassword == "" {
 		return nil, status.Error(codes.InvalidArgument, "user new_password is a required argument")
 	}
-	err := s.userService.ChangePassword(ctx, changePasswordRequest.UserId, changePasswordRequest.OldPassword, changePasswordRequest.NewPassword)
+	// parse the user id
+	userId, err := uuid.Parse(changePasswordRequest.UserId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", changePasswordRequest.UserId)
+	}
+	err = s.userService.ChangePassword(ctx, userId, changePasswordRequest.OldPassword, changePasswordRequest.NewPassword)
 	if err != nil {
 		return nil, serviceToGRPCError(err)
 	}
 	// TODO: add request id
 	return &emptypb.Empty{}, nil
 }
+
+/*
+CHECKPOINT:
+- you were modifying the user server to use uuids instead of integers
+- all the tests are broken now lol
+*/

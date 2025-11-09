@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/townsag/reed/user_service/internal/repository"
 	"github.com/townsag/reed/user_service/internal/service"
 	"golang.org/x/crypto/bcrypt"
@@ -127,7 +128,7 @@ func TestGetMissingUserIdIntegration(t *testing.T) {
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
 	// try to get a user that does not exist
-	_, err = userRepo.GetUserById(t.Context(), 1234)
+	_, err = userRepo.GetUserById(t.Context(), uuid.New())
 	var notFoundError *service.NotFoundError
 	// errors.As traverses the error chain until it finds an error of the same type as the value of the pointer target
 	// errors are interface (pointer) types so we would be looking for an error of type (*service.DomainError)
@@ -197,7 +198,7 @@ func TestDeactivateUserNotFoundIntegration(t *testing.T) {
 		t.Fatalf("unable to connect to postgres container: %v", err)
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
-	err = userRepo.DeactivateUser(t.Context(), 1234)
+	err = userRepo.DeactivateUser(t.Context(), uuid.New())
 	var notFoundErr *service.NotFoundError
 	if !errors.As(err, &notFoundErr) {
 		t.Errorf("when deactivating a user that does not exist, want not found error, got: %v", err)
@@ -244,7 +245,7 @@ func TestModifyPasswordNotFoundIntegration(t *testing.T) {
 		t.Fatalf("unable to connect to postgres container: %v", err)
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
-	err = userRepo.ModifyPassword(t.Context(), 1234, "zxcv", "qwer")
+	err = userRepo.ModifyPassword(t.Context(), uuid.New(), "zxcv", "qwer")
 	var notFoundErr *service.NotFoundError
 	if !errors.As(err, &notFoundErr) {
 		t.Errorf("when modifying the password of a user that does not exist, want not found error, got: %v", err)

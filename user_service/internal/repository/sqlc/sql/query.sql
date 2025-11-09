@@ -1,7 +1,6 @@
--- name: CreateUserAndReturnId :one
-INSERT INTO users (user_name, email, max_documents, hashed_password)
-VALUES ($1, $2, $3, $4)
-RETURNING id;
+-- name: CreateUser :exec
+INSERT INTO users (id, user_name, email, max_documents, hashed_password)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: GetUserById :one
 SELECT id, user_name, email, max_documents, hashed_password, is_active, created_at, last_modified 

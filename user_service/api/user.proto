@@ -13,7 +13,7 @@ service UserService {
 }
 
 message User {
-    int32 user_id = 1;
+    string user_id = 1;
     string user_name = 2;
     string email = 3;
     int32 max_documents = 4;
@@ -22,7 +22,7 @@ message User {
 }
 
 message GetUserRequest {
-    int32 user_id = 1;
+    string user_id = 1;
 }
 
 message UserReply {
@@ -37,11 +37,11 @@ message CreateUserRequest {
 }
 
 message CreateUserReply {
-    int32 user_id = 2;
+    string user_id = 2;
 }
 
 message DeactivateUserRequest {
-    int32 user_id = 1;
+    string user_id = 1;
 }
 
 // message LoginUserRequest {
@@ -54,7 +54,7 @@ message DeactivateUserRequest {
 // }
 
 message ChangeUserPasswordRequest {
-    int32 user_id = 1;
+    string user_id = 1;
     string old_password = 2;
     string new_password = 3;
 }

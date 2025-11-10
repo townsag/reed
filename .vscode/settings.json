@@ -3,6 +3,8 @@
     "DBTX",
     "emptypb",
     "execrows",
+    "initdb",
+    "isready",
     "jackc",
     "jetstream",
     "pgconn",

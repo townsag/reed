@@ -6,8 +6,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	// "github.com/exaring/otelpgx"
-	// TODO: ^add otel tracing to the pgxpool
+	"github.com/exaring/otelpgx"
 
 	"github.com/townsag/reed/user_service/internal/util"
 )
@@ -31,7 +30,7 @@ func GetConfiguration() (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	// cfg.ConnConfig.Tracer = otelpgx.NewTracer()
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
 	return cfg, nil	
 }
 

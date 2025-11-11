@@ -1,0 +1,28 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+exporters:
+  debug:
+  #   verbosity: detailed
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    tls:
+      insecure: true
+  # prometheusremotewrite:
+  #   endpoint: "http://prometheus:9090/api/v1/write"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp, debug]
+    metrics:
+      receivers: [otlp]
+      exporters: [debug,otlphttp/prometheus]
+      # exporters: [debug,prometheusremotewrite]

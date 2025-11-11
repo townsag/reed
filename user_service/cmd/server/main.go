@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"google.golang.org/grpc"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	
 	"github.com/townsag/reed/user_service/pkg/middleware"
 	"github.com/townsag/reed/user_service/internal/config"
@@ -18,6 +19,12 @@ import (
 
 
 func main() {
+	// initialize the otel sdk
+	otelShutdown, err := config.SetupOTelSDK(context.Background())
+	if err != nil {
+		log.Fatalf("failed to bootstrap OTEL SDK: %v", err)
+	}
+	defer otelShutdown(context.Background())
 	// create a connection to the database
 	cfg, err := config.GetConfiguration()
 	if err != nil {
@@ -38,7 +45,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer(grpc.UnaryInterceptor(middleware.RequestIdInterceptor()))
+	s := grpc.NewServer(
+		grpc.UnaryInterceptor(middleware.RequestIdInterceptor()),
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	pb.RegisterUserServiceServer(s, userServer)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

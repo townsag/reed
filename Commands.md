@@ -6,3 +6,13 @@ chmod +x ./init_scripts/*.sh
 docker compose build
 docker compose up
 ```
+
+## To view the traces in your browser
+```bash
+cd .
+docker compose up
+# in a second terminal window
+cd user_service
+go run call_user_service.go
+# view the traces at localhost:3000 
+```

@@ -16,6 +16,13 @@ exporters:
       insecure: true
   # prometheusremotewrite:
   #   endpoint: "http://prometheus:9090/api/v1/write"
+  otlphttp/logs:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+# processors:
+#   batch:
 
 service:
   pipelines:
@@ -26,3 +33,7 @@ service:
       receivers: [otlp]
       exporters: [debug,otlphttp/prometheus]
       # exporters: [debug,prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      # processors: [batch]
+      exporters: [debug,otlphttp/logs]

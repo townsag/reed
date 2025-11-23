@@ -9,6 +9,8 @@
     "jetstream",
     "otelgrpc",
     "otelpgx",
+    "otelslog",
+    "otlploggrpc",
     "otlptracegrpc",
     "pgconn",
     "pgtype",

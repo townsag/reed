@@ -17,3 +17,12 @@
                 - created at
             - queries:
                 - text search
+- Logging:
+    - the slog logger.WithAttributes pattern can be used to bind key value pairs to a logger so that all subsequent calls to that logger have those key value pairs
+        - this is very useful to manually bind the request id to a logger
+    - this pattern is not necessary when using otelslog because otelslog will automatically extract the spanId and traceId from the context when logging
+        - this way all the logs for a trace are bound to a trace id
+        - this only works when we use the logger.InfoContext(ctx...) functions
+    - this way we can use the trace viewer to find all the traces with a userId attribute and then look at logs with those trace ids instead of looking for all the logs with a user id
+    - fundamentally: Tempo is the entrypoint for observability, see logging as a secondary source of observability data
+        - it is not important that logs are easily queryable if Tempo is easily queryable and the logs can easily be reached from tempo

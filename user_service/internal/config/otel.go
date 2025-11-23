@@ -3,14 +3,19 @@ package config
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+
 	// "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	// "go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
-	// "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/log"
+
 	// "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
@@ -61,13 +66,21 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	// otel.SetMeterProvider(meterProvider)
 
 	// Set up logger provider.
-	// loggerProvider, err := newLoggerProvider()
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return shutdown, err
-	// }
-	// shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
-	// global.SetLoggerProvider(loggerProvider)
+	loggerProvider, err := newLoggerProvider(ctx)
+	if err != nil {
+		handleErr(err)
+		return shutdown, err
+	}
+	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
+	global.SetLoggerProvider(loggerProvider)
+
+	// create a new slog logger that is backed by a handler that will send all logs that
+	// it receives to otel
+	defaultLogger := otelslog.NewLogger(
+		"user_service",
+		otelslog.WithLoggerProvider(loggerProvider),
+	)
+	slog.SetDefault(defaultLogger)
 
 	return shutdown, err
 }
@@ -107,14 +120,14 @@ func newTracerProvider(ctx context.Context) (*trace.TracerProvider, error) {
 // 	return meterProvider, nil
 // }
 
-// func newLoggerProvider() (*log.LoggerProvider, error) {
-// 	logExporter, err := stdoutlog.New()
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func newLoggerProvider(ctx context.Context) (*log.LoggerProvider, error) {
+	logExporter, err := otlploggrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 	loggerProvider := log.NewLoggerProvider(
-// 		log.WithProcessor(log.NewBatchProcessor(logExporter)),
-// 	)
-// 	return loggerProvider, nil
-// }
+	loggerProvider := log.NewLoggerProvider(
+		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+	)
+	return loggerProvider, nil
+}

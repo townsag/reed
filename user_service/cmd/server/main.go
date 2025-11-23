@@ -4,17 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
+	"os"
 
-	"google.golang.org/grpc"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	
-	"github.com/townsag/reed/user_service/pkg/middleware"
+	"google.golang.org/grpc"
+
+	pb "github.com/townsag/reed/user_service/api"
 	"github.com/townsag/reed/user_service/internal/config"
 	"github.com/townsag/reed/user_service/internal/repository"
-	"github.com/townsag/reed/user_service/internal/service"
 	"github.com/townsag/reed/user_service/internal/server"
-	pb "github.com/townsag/reed/user_service/api"
+	"github.com/townsag/reed/user_service/internal/service"
+	"github.com/townsag/reed/user_service/pkg/middleware"
 )
 
 
@@ -28,11 +30,13 @@ func main() {
 	// create a connection to the database
 	cfg, err := config.GetConfiguration()
 	if err != nil {
-		log.Fatalf("failed to get database connection configuration: %v", err)
+		slog.Error("failed to get database connection configuration", "error", err.Error())
+		os.Exit(1)
 	}
 	pool, err := config.CreateDBConnectionPool(context.Background(), cfg)
 	if err != nil {
-		log.Fatalf("failed to create database connection pool: %v", err)
+		slog.Error("failed to create database connection pool", "error", err.Error())
+		os.Exit(1)
 	}
 	defer pool.Close()
 	// create a repo
@@ -43,15 +47,17 @@ func main() {
 	userServer := server.NewUserServiceImpl(userService)
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 50051))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		slog.Error("failed to listen", "error", err)
+		os.Exit(1)
 	}
 	s := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.RequestIdInterceptor()),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 	pb.RegisterUserServiceServer(s, userServer)
-	log.Printf("server listening at %v", lis.Addr())
+	slog.Warn(fmt.Sprintf("server listening at %v", lis.Addr()))
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		slog.Error("failed to serve", "error", err.Error())
+		os.Exit(1)
 	}
 }

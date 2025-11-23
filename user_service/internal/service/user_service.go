@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/townsag/reed/user_service/internal/config"
@@ -63,6 +64,7 @@ func NewUserService(repo UserRepository) *UserService {
 
 func (us *UserService) CreateUser(ctx context.Context, userName string, email string, maxDocuments *int32, password string) (uuid.UUID, error) {
 	if len(userName) < config.MinUsernameLength {
+		slog.WarnContext(ctx, "failed to create user, username is too small", "userName", userName)
 		return uuid.Nil, Invalid(
 			fmt.Sprintf("username: <%s> did not match the min username length constraint: %d", userName, config.MinUsernameLength),
 			nil,
@@ -71,6 +73,7 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 	// TODO: validate the email using regex, etc.
 	// TODO: create a sign-up flow that requires clicking a link in their inbox
 	if len(password) < config.MinPasswordLength {
+		slog.WarnContext(ctx, "failed to create user, password is too small", "password", password)
 		return uuid.Nil, Invalid(
 			fmt.Sprintf("password: <%s> did not match the min password length constraint: %d", password, config.MinPasswordLength),
 			nil,
@@ -90,6 +93,11 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unknown error creating user", err)
 		}
+		slog.ErrorContext(
+			ctx,
+			"failed to create user because of repository error",
+			"error", err.Error(),
+		)
 		return uuid.Nil, err
 	} else {
 		return userId, nil
@@ -102,6 +110,11 @@ func (us *UserService) GetUser(ctx context.Context, userId uuid.UUID) (*User, er
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unknown error getting user", err)
 		}
+		slog.ErrorContext(
+			ctx,
+			"failed to get user because of repository error",
+			"error", err.Error(),
+		)
 		return nil, err
 	} else {
 		return user, nil
@@ -115,6 +128,11 @@ func (us *UserService) DeactivateUser(ctx context.Context, userId uuid.UUID) err
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unknown error deactivating user", err)
 		}
+		slog.ErrorContext(
+			ctx,
+			"failed to deactivate user because of repository error",
+			"error", err.Error(),
+		)
 	}
 	return err
 }
@@ -126,6 +144,11 @@ func (us *UserService) ChangePassword(ctx context.Context, userId uuid.UUID, old
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unknown error modifying users password", err)
 		}
+		slog.ErrorContext(
+			ctx,
+			"failed to change password because of repository error",
+			"error", err.Error(),
+		)
 	}
 	return err
 }

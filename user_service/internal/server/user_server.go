@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -65,10 +66,13 @@ func (s *UserServiceServerImpl) GetUser(
 	// parse the given userId
 	userId, err := uuid.Parse(getUserReq.UserId)
 	if err != nil {
+		slog.WarnContext(ctx, "failed to parse the uuid provided by the client", "error", err.Error())
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", getUserReq.UserId)
 	}
 	user, err := s.userService.GetUser(ctx, userId)
 	if err != nil {
+		// don't log the error here because it is an error being returned from the service level
+		// it will already be logged by the called code at the service level
 		return nil, serviceToGRPCError(err)
 	}
 	return &pb.UserReply{
@@ -114,6 +118,7 @@ func (s *UserServiceServerImpl) DeactivateUser(
 	// parse the user id
 	userId, err := uuid.Parse(deactivateUserReq.UserId)
 	if err != nil {
+		slog.WarnContext(ctx, "failed to parse the uuid provided by the client", "error", err.Error())
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", deactivateUserReq.UserId)
 	}
 	err = s.userService.DeactivateUser(ctx, userId)
@@ -137,6 +142,7 @@ func (s *UserServiceServerImpl) ChangePassword(
 	// parse the user id
 	userId, err := uuid.Parse(changePasswordRequest.UserId)
 	if err != nil {
+		slog.WarnContext(ctx, "failed to parse the uuid provided by the client", "error", err.Error())
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id as uuid: %v", changePasswordRequest.UserId)
 	}
 	err = s.userService.ChangePassword(ctx, userId, changePasswordRequest.OldPassword, changePasswordRequest.NewPassword)

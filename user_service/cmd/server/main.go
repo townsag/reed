@@ -51,7 +51,10 @@ func main() {
 		os.Exit(1)
 	}
 	s := grpc.NewServer(
-		grpc.UnaryInterceptor(middleware.RequestIdInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			grpc.UnaryServerInterceptor(middleware.TraceIdInterceptor()),
+			grpc.UnaryServerInterceptor(middleware.LoggingInterceptor()),
+		),
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	)
 	pb.RegisterUserServiceServer(s, userServer)

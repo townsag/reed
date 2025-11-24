@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/townsag/reed/user_service/pkg/client"
@@ -23,6 +24,7 @@ func main() {
 		"password",
 		nil,
 	)
+	fmt.Println("reply: ", reply)
 	if err != nil {
 		log.Fatalf("failed to create a user with error: %v", err)
 	}

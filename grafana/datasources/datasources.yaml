@@ -18,8 +18,23 @@ datasources:
       datasourceUid: prometheus
     streamingEnabled:
       search: true
+  correlations:
+    - targetUID: loki
+      label: "trace to logs"
+      description: "..."
+      type: query
+      config:
+        target:
+          expr: '{service_name=~"$$serviceName"} | trace_id = "$$traceID"'
+        field: "traceID"
+        transformations:
+          - type: regex
+            field: "serviceTags"
+            expression: '{(?=[^\}]*\bkey":"service.name")[^\}]*\bvalue":"(.*?)".*}'
+            mapValue: "serviceName"
 - name: Loki
   type: loki
+  uid: loki
   access: proxy
   orgId: 1
   url: 'http://loki:3100'

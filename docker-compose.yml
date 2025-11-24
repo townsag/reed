@@ -94,6 +94,21 @@ services:
     depends_on:
       - init
   
+  loki:
+    image: grafana/loki:3.4.2
+    user: root
+    # CHECKPOINT
+    # modify this docker compose file to that the loki service uses an image
+    # that is created by an init image and has a created and owned directory
+    # mkdir -p ./loki/rules
+    # chmod -R 777 ./loki/rules
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml
+      - lokiData:/tmp/loki
+    command: -config.file=/etc/loki/local-config.yaml
+  
   otel-collector:
     image: otel/opentelemetry-collector:0.86.0
     command: [ "--config=/etc/otel-collector.yaml" ]
@@ -103,7 +118,7 @@ services:
       - tempo
   
   grafana:
-    image: grafana/grafana:11.0.0
+    image: grafana/grafana:12.3.0
     volumes:
       - ./grafana/datasources/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
@@ -119,3 +134,4 @@ services:
 volumes:
   pgData:
   tempoData:
+  lokiData:

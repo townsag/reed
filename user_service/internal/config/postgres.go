@@ -1,12 +1,13 @@
 package config
 
 import (
-	"strconv"
-	"fmt"
 	"context"
+	"fmt"
+	"strconv"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/exaring/otelpgx"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/townsag/reed/user_service/internal/util"
 )
@@ -39,10 +40,10 @@ func CreateDBConnectionPool(ctx context.Context, config *pgxpool.Config) (*pgxpo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a database connection pool: %w", err)
 	}
-	// if err = otelpgx.RecordStats(pool, otelpgx.WithMinimumReadDBStatsInterval(time.Second * 1)); err != nil {
-	// 	pool.Close()
-	// 	return nil, fmt.Errorf("failed to set up database connection pool observability: %w", err)
-	// }
+	if err = otelpgx.RecordStats(pool, otelpgx.WithMinimumReadDBStatsInterval(time.Second * 1)); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to set up database connection pool observability: %w", err)
+	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping the new connection pool: %w", err)

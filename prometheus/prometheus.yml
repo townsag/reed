@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+storage:
+  exemplars:
+    max_exemplars: 100000
+  tsdb:
+    out_of_order_time_window: 5m

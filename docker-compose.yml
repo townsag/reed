@@ -13,7 +13,7 @@ services:
       retries: 5
       start_period: 30s
       timeout: 10s
-    restart: always
+    # restart: always
     volumes:
       - pgData:/var/lib/postgresql/data
       # this mounted directory contains a script that will create the databases and then a script that
@@ -33,7 +33,7 @@ services:
       - PGADMIN_DEFAULT_PASSWORD=password
     ports:
       - "5050:80"
-    restart: always
+    # restart: always
   
   user-service:
     container_name: user-service
@@ -69,7 +69,26 @@ services:
       postgres:
         condition: service_healthy
         restart: true
-  
+
+  # example: https://github.com/grafana/tempo/tree/main/example/docker-compose/otel-collector
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-otlp-receiver'
+      - '--enable-feature=exemplar-storage'
+      - '--log.level=debug'
+      # otlp receiver flag enables an endpoint on the prometheus instance that receives metrics pushed from
+      # the otel collector using the otel format over http. This is different form remote write because
+      # remote write uses the prometheus format and not the otel metrics format
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - promData:/prometheus
+
   # Tempo runs as user 10001, and docker compose creates the volume as root.
   # As such, we need to chown the volume in order for Tempo to start correctly.
   init:
@@ -116,6 +135,7 @@ services:
       - ./otel_collector/otel-collector.yaml:/etc/otel-collector.yaml
     depends_on:
       - tempo
+      - prometheus
   
   grafana:
     image: grafana/grafana:12.3.0
@@ -133,5 +153,6 @@ services:
 
 volumes:
   pgData:
+  promData:
   tempoData:
   lokiData:

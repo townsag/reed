@@ -1,0 +1,581 @@
+openapi: '3.0.3'
+info:
+  title: API Gateway HTTP api specification
+  description: This api spec defines the interface between the api gateway and the client. The API Gateway is the public entrypoint for the various backend microservices. It orchestrates requests to multiple microservices and provides a cohesive interface for the client to use
+  version: '0.1.0'
+servers:
+  - url: https://api.server.test/v1
+paths:
+  /document:
+    post:
+      tags:
+        - Documents
+      summary: create a new document for a user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                documentName:
+                  type: string
+                documentDescription:
+                  type: string
+              required:
+                - userId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documentId:
+                    type: string
+                    format: uuid
+                required:
+                  - documentId
+                example:
+                  documentId: "02fd88bd-e5d3-49e8-9ac4-537141c02984"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+        
+    get:
+      tags:
+        - Documents
+      summary: get all the documents that a given user has owner permissions on
+      parameters:
+        - in: query
+          name: cursor
+          schema: 
+            type: string
+          required: false
+          description: a cursor can optionally be supplied for pagination
+        - in: query
+          name: limit
+          schema:
+            type: string
+          required: false
+          description: the number of documents to retreive in a page
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
+                  cursor:
+                    type: string
+                required:
+                  - documents
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags:
+        - Documents
+      summary: batch delete endpoint for deleting lists of documents
+      requestBody:
+        description: the document ids that the client wants deleted
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                documentIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+              required:
+                - documentIds
+      responses:
+        '204':
+          description: No Content
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+  /document/{documentId}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags:
+        - Documents
+      summary: get one document 
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+    put:
+      tags:
+        - Documents
+      summary: update one document
+      requestBody:
+        description: the parts of the document that the client wants to change
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                documentName:
+                  type: string
+                documentDescription:
+                  type: string
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags:
+        - Documents
+      summary: delete a document
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+  /document/{documentId}/permission:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+    get:
+      tags:
+        - Permissions
+      summary: get all the users that have permission on a document, this is only meant to be called by users that have owner permissions on that document
+      parameters:
+        - in: query
+          name: cursor
+          schema: 
+            type: string
+          required: false
+          description: a cursor can optionally be supplied for pagination
+        - in: query
+          name: limit
+          schema:
+            type: string
+          required: false
+          description: the number of documents to retreive in a page
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Permission"
+                  cursor:
+                    type: string
+                required:
+                  - permissions
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Permissions
+      summary: create a permission on a document either by sharing the document with an existing user or creating a new guest user for that document
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userIdToShare:
+                  type: string
+                  format: uuid
+              required:
+                - userIdToShare
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                minProperties: 1
+                properties:
+                  guestId:
+                    type: string
+                    format: uuid
+                  userIdSharedWith:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+  /document/{documentId}/permission/principal/{principalId}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentId"
+      - $ref: "#/components/parameters/PrincipalId"
+    get:
+      tags:
+        - Permissions
+      summary: get the permission of a principal on a document
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Permission"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - Permissions
+      summary: update the permission level of a user or a guest on a document
+      requestBody:
+        required: true
+        content: 
+          application/json:
+            schema:
+              type: object
+              properties:
+                permissionLevel:
+                  $ref: "#/components/schemas/PermissionLevel"
+              required:
+                - permissionLevel
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      tags:
+        - Permissions
+      summary: delete a user or guests permissions on a document
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+  /user:
+    post:
+      tags:
+        - Users
+      summary: create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userName:
+                  type: string
+                userEmail:
+                  type: string
+                password:
+                  type: string
+                maxDocuments:
+                  type: integer
+              required:
+                - userName
+                - userEmail
+                - password
+                - maxDocuments
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+  /user/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags:
+        - Users
+      summary: get a user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+    put:
+      tags:
+        - Users
+      summary: update a user including the users password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                oldPassword:
+                  type: string
+                newPassword:
+                  type: string
+              required:
+                - oldPassword
+                - newPassword
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+    
+    delete:
+      tags:
+        - Users
+      summary: deactivate a user
+      responses:
+        '204':
+          description: OK
+        '400':
+          $ref: "#/components/responses/BadRequest"
+        '401':
+          $ref: "#/components/responses/Unauthenticated"
+        '403':
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  schemas:
+    CreatedAt:
+      type: integer
+      format: int64
+      description: Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+      example: 1702483200000
+    
+    LastModifiedAt:
+      type: integer
+      format: int64
+      description: Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+      example: 1702483200000
+    
+    Document:
+      type: object
+      properties:
+        documentId:
+          type: string
+          format: uuid
+        documentName:
+          type: string
+        documentDescription:
+          type: string
+        createdAt:
+          $ref: "#/components/schemas/CreatedAt"
+        lastModifiedAt:
+          $ref: "#/components/schemas/LastModifiedAt"
+      required:
+        - documentId
+        - documentName
+        - documentDescription
+        - createdAt
+        - lastModifiedAt
+
+    Principal:
+      type: object
+      properties:
+        principalId:
+          type: string
+          format: uuid
+        principalType:
+          type: string
+          enum:
+            - user
+            - guest
+      required:
+        - principalId
+        - principalType
+    
+    PermissionLevel:
+      type: string
+      enum:
+        - viewer
+        - editor
+        - owner
+
+    Permission:
+      type: object
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        documentId:
+          type: string
+          format: uuid
+        permissionLevel:
+          $ref: "#/components/schemas/PermissionLevel"
+        createdBy:
+          type: string
+          format: uuid
+        createdAt:
+          $ref: "#/components/schemas/CreatedAt"
+        lastModifiedAt:
+          $ref: "#/components/schemas/LastModifiedAt"
+      required:
+        - principal
+        - documentId
+        - permissionLevel
+        - createdBy
+        - createdAt
+        - lastModifiedAt
+    
+    User:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        userName:
+          type: string
+        email:
+          type: string
+        maxDocuments:
+          type: integer
+      required:
+        - userId
+        - userName
+        - email
+        - maxDocuments
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+  parameters:
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: "123e4567-e89b-12d3-a456-426614174000"
+
+    PrincipalId:
+      name: principalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: "123e4567-e89b-12d3-a456-426614174000"
+    
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: "123e4567-e89b-12d3-a456-426614174000"
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Unauthenticated:
+      description: Athentication required
+      content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Error"
+            example:
+              error: "unauthorized"
+              message: "authentication missing or invalid"
+
+    Unauthorized:
+      description: Not Allowed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: "forbidden"
+            message: "this user is not allowed to perform this action"

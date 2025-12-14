@@ -1,6 +1,5 @@
 y-crdt/
 note_ui/
-api_gateway/
 
 *.env
 user_service/go-stdlib-common-interfaces.md

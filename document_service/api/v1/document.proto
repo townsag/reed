@@ -156,6 +156,8 @@ message CreateGuestReply {
 }
 
 message UpsertPermissionUserRequest {
+    // consider that we might want to include the user that is creating the guest
+    // in a created by field
     string user_id = 1;
     string document_id = 2;
     PermissionLevel permission_level = 3;

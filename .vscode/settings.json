@@ -1,5 +1,6 @@
 {
   "cSpell.words": [
+    "codegen",
     "DBTX",
     "emptypb",
     "execrows",
@@ -7,6 +8,7 @@
     "isready",
     "jackc",
     "jetstream",
+    "Oapi",
     "otelgrpc",
     "otelpgx",
     "otelslog",

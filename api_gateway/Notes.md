@@ -16,3 +16,39 @@
 - deactivate users
 - update the users password
 - get the user information
+
+
+## Understand the generated code:
+- the generated code creates a ServerInterfaceWrapper struct which contains a handler, a slice of middleware functions and an error handler function
+- the handler is a struct which implements the ServerInterface interface
+    - this interface is implemented by the called code that I will be writing
+- the slice of middleware functions is not populated yet, I expect that I need to be using a different framework to generate validation middleware or I need to manually implement the validation middleware
+    - check out https://github.com/oapi-codegen/nethttp-middleware
+- the error handler function is also not implemented yet, I expect that I have to implement the error handler code
+- so what does this actually get me?
+    - I don't have to write any of the code at the api level that handles binding query or path parameters to variables
+    - I don't have to write any of the code at the api level that handles binding handler functions to the routes associated with those handler functions
+    - I don't have to manually write the types associated with the openapi spec
+- thoughts about directory structure
+    - adopt the server - service - repository pattern that I have been using for the gRPC microservices
+    - the generated code is basically the server layer
+        - use the generated code and middleware to handle all things related to the network and http communication
+            - serialization and deserialization 
+            - authentication
+            - request validation
+        - middleware is in charge of request validation
+        - the error handler function is in charge of mapping service level errors to http errors
+        - in the internal/server directory we can store the implementation of the error handler function and if necessary we can also store the validation middleware
+    - treat the struct which implements ServerInterface as the service layer
+        - this struct should implement methods which encapsulate:
+            - business logic level validation
+            - calling databases or backing services via clients
+            - wrapping or translating of errors from the persistence layer to the client
+        - the api gateway layer should return service level errors
+            - error handler function defined at the server level should translate from service level errors to server level errors
+        - in the internal/service directory we can store the implementation of the ServerInterface interface
+    - treat the generated gRPC clients as the repository layer
+        - they handle persistence
+    - continue to use the cmd directory to create an instance of the server with the required service struct and clients etc.
+    - will have to figure out how to use the generated gRPC clients from the user service and the document service in the api-gateway service
+        - is this what the /pkg directory is for?

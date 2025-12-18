@@ -3,4 +3,8 @@ output: api_gateway.gen.go
 generate:
   models: true
   std-http-server: true
+  # strict-server: true
+  # ^ decided not to use this approach because it abstracts away more of the implementation
+  # details related to the net/http server. This may be what I want in the future but for now
+  # I need to have more familiarity with net/http
   embedded-spec: true

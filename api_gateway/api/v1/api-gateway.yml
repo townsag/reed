@@ -519,8 +519,8 @@ components:
     Error:
       type: object
       properties:
-        error:
-          type: string
+        # error:
+        #   type: string
         message:
           type: string
 
@@ -567,7 +567,7 @@ components:
             schema:
               $ref: "#/components/schemas/Error"
             example:
-              error: "unauthorized"
+              # error: "unauthorized"
               message: "authentication missing or invalid"
 
     Unauthorized:
@@ -577,5 +577,5 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example:
-            error: "forbidden"
+            # error: "forbidden"
             message: "this user is not allowed to perform this action"

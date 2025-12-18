@@ -1,0 +1,7 @@
+go 1.24.5
+
+use (
+	./api_gateway
+	./document_service
+	./user_service
+)

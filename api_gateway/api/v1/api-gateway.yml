@@ -27,7 +27,7 @@ paths:
               required:
                 - userId
       responses:
-        '200':
+        '201':
           description: OK
           content:
             application/json:
@@ -200,7 +200,7 @@ paths:
           required: false
           description: the number of documents to retreive in a page
       responses:
-        '200':
+        '201':
           description: OK
           content:
             application/json:
@@ -326,19 +326,23 @@ paths:
               properties:
                 userName:
                   type: string
+                  minLength: 1
                 userEmail:
                   type: string
+                  format: email
                 password:
                   type: string
+                  minLength: 8
                 maxDocuments:
                   type: integer
+                  minimum: 1
+                  format: int32
               required:
                 - userName
                 - userEmail
                 - password
-                - maxDocuments
       responses:
-        '200':
+        '201':
           description: OK
           content:
             application/json:
@@ -510,6 +514,7 @@ components:
           type: string
         maxDocuments:
           type: integer
+          format: int32
       required:
         - userId
         - userName
@@ -519,8 +524,8 @@ components:
     Error:
       type: object
       properties:
-        error:
-          type: string
+        # error:
+        #   type: string
         message:
           type: string
 
@@ -567,7 +572,7 @@ components:
             schema:
               $ref: "#/components/schemas/Error"
             example:
-              error: "unauthorized"
+              # error: "unauthorized"
               message: "authentication missing or invalid"
 
     Unauthorized:
@@ -577,5 +582,5 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example:
-            error: "forbidden"
+            # error: "forbidden"
             message: "this user is not allowed to perform this action"

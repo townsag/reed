@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"google.golang.org/grpc/codes"
     "google.golang.org/grpc/status"
 
+	"github.com/townsag/reed/api_gateway/internal/config"
 	"github.com/townsag/reed/api_gateway/internal/server"
 	userService "github.com/townsag/reed/user_service/pkg/client"
 )
@@ -94,7 +94,7 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusBadRequest, err.Error())
 	}
 	// call the user microservice with the gRPC client
-	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
 	defer cancel()
 	serviceReply, err := s.userServiceClient.CreateUser(
 		ctx,
@@ -110,4 +110,56 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 	// only the UserId field of the create user reply struct is exported so we 
 	// can directly encode the service reply
 	sendJsonResponse(w, http.StatusCreated, serviceReply)
+}
+
+// deactivate a user
+func (s *Service) DeleteUserUserId(w http.ResponseWriter, r *http.Request, userId server.UserId) {
+	// there is no request body to validate
+	// call the user microservice to deactivate this user
+	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
+	defer cancel()
+	err := s.userServiceClient.DeactivateUser(ctx, userId)
+	if err != nil {
+		sendError(w, grpcToHttpStatus(err), err.Error())
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// get a user
+func (s *Service) GetUserUserId(w http.ResponseWriter, r *http.Request, userId server.UserId) {
+	// call the user microservice to get this user
+	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
+	defer cancel()
+	serviceReply, err := s.userServiceClient.GetUser(ctx, userId)
+	if err != nil {
+		sendError(w, grpcToHttpStatus(err), err.Error())
+	}
+	// ignore the returned user id, we don't have to parse it because it 
+	// will be the same as the calling user id 
+	// format the response into a user struct
+	response := &server.User{
+		Email: serviceReply.User.Email,
+		MaxDocuments: serviceReply.User.MaxDocuments,
+		UserId: userId,
+		UserName: serviceReply.User.UserName,
+	}
+	// return the User object to the client
+	sendJsonResponse(w, http.StatusOK, response)
+}
+
+// update a user including the users password
+func (s *Service) PutUserUserId(w http.ResponseWriter, r *http.Request, userId server.UserId) {
+	var reqBody server.PutUserUserIdJSONRequestBody
+	err := json.NewDecoder(r.Body).Decode(&reqBody)
+	if err != nil {
+		sendError(w, http.StatusBadRequest, fmt.Sprintf("error when decoding the request body: %s", err.Error()))
+	}
+	// now that we have successfully decoded the json body we need to call the user service 
+	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
+	defer cancel()
+	err = s.userServiceClient.ChangeUserPassword(ctx, userId, reqBody.OldPassword, reqBody.NewPassword)
+	if err != nil {
+		sendError(w, grpcToHttpStatus(err), err.Error())
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

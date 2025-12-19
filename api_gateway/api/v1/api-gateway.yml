@@ -514,6 +514,7 @@ components:
           type: string
         maxDocuments:
           type: integer
+          format: int32
       required:
         - userId
         - userName

@@ -101,7 +101,7 @@ message DeleteDocumentRequest {
 
 
 message ListDocumentByPrincipalRequest {
-    Principal recipient = 1;
+    string principal_id = 1;
     repeated PermissionLevel permissions_filter = 2;
     // ^these are the permission levels for which you want to see documents that the given 
     // principal has access to
@@ -125,7 +125,7 @@ message ListDocumentsByPrincipalReply {
 
 message GetPermissionsRequest {
     string document_id = 1;
-    Principal principal = 2;
+    string principal_id = 2;
 }
 
 message GetPermissionsReply {
@@ -173,6 +173,6 @@ message UpdatePermissionGuestRequest {
 }
 
 message DeletePermissionsPrincipalRequest {
-    Principal recipient = 1;
+    string principal_id = 1;
     string document_id = 2;
 }

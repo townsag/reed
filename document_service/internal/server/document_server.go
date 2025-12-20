@@ -375,12 +375,12 @@ func (s *DocumentServiceServerImpl) ListDocumentsByPrincipal(
 	listDocReq *pb.ListDocumentByPrincipalRequest,
 ) (*pb.ListDocumentsByPrincipalReply, error) {
 	// parse the principal id
-	principalId, err := uuid.Parse(listDocReq.Recipient.PrincipalId)
+	principalId, err := uuid.Parse(listDocReq.PrincipalId)
 	if err != nil {
 		return nil, status.Errorf(
 			codes.InvalidArgument,
 			"unable to parse documentId: %s as uuid",
-			listDocReq.Recipient.PrincipalId,
+			listDocReq.PrincipalId,
 		)
 	}
 	// parse the permissions list
@@ -437,10 +437,10 @@ func (s *DocumentServiceServerImpl) GetPermissionsOfPrincipalOnDocument(
 		)
 	}
 	// parse the principalID as a uuid
-	principalId, err := uuid.Parse(req.Principal.PrincipalId)
+	principalId, err := uuid.Parse(req.PrincipalId)
 	if err != nil {
 		return nil, status.Errorf(
-			codes.InvalidArgument, "unable to parse principalId as a uuid: %v", req.Principal.PrincipalId,
+			codes.InvalidArgument, "unable to parse principalId as a uuid: %v", req.PrincipalId,
 		)
 	}
 	permission, err := s.documentService.GetPermissionOfPrincipalOnDocument(ctx, documentId, principalId)
@@ -608,9 +608,9 @@ func (s *DocumentServiceServerImpl) DeletePermissionsPrincipal(
 	req *pb.DeletePermissionsPrincipalRequest,
 ) (*emptypb.Empty, error) {
 	// parse the recipient id
-	recipientId, err := uuid.Parse(req.Recipient.PrincipalId)
+	recipientId, err := uuid.Parse(req.PrincipalId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse recipient id as uuid: %v", req.Recipient.PrincipalId)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse recipient id as uuid: %v", req.PrincipalId)
 	}
 	// parse the document id
 	documentId, err := uuid.Parse(req.DocumentId)

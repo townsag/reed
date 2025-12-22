@@ -370,6 +370,33 @@ func (s *DocumentServiceServerImpl) DeleteDocument(
 	return &emptypb.Empty{}, nil
 }
 
+func (s *DocumentServiceServerImpl) DeleteDocuments(
+	ctx context.Context,
+	deleteDocsReq *pb.DeleteDocumentsRequest,
+) (*emptypb.Empty, error) {
+	// parse the document ids
+	parsedDocumentIds := make([]uuid.UUID, len(deleteDocsReq.DocumentIds))
+	for i, documentId := range deleteDocsReq.DocumentIds {
+		parsedId, err := uuid.Parse(documentId)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "failed to parse document id: %s", documentId)
+		}
+		parsedDocumentIds[i] = parsedId
+	}
+	// parse the user id
+	parsedUserId, err := uuid.Parse(deleteDocsReq.UserId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id: %s", deleteDocsReq.UserId)
+	}
+	// validate that the user has ownership permissions over each of the documents in the list 
+	// call the delete documents service method
+	err = s.documentService.DeleteDocuments(ctx, parsedDocumentIds, parsedUserId)
+	if err != nil {
+		return nil, serviceToGRPCError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
 func (s *DocumentServiceServerImpl) ListDocumentsByPrincipal(
 	ctx context.Context,
 	listDocReq *pb.ListDocumentByPrincipalRequest,

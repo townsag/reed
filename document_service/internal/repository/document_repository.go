@@ -270,24 +270,16 @@ func (dr *DocumentRepository) UpdateDocument(
 	return nil
 }
 
-// what does it mean for a document to be deleted: only support hard deletion
-// - delete the document in the documents table and all permissions on the document
-//	 in the permissions table
-// - publish an event notifying other services that the document has been deleted
-// decided to use hard deletion because it is simpler to implement and understand 
-// by users
-// decided not to use cascading deletes because of hidden potential for mistakes
-func (dr *DocumentRepository) DeleteDocument(
+// this function encapsulates the logic for deleting a document and the relevant permissions
+// and guests associated with that document. This function has been pulled out of the delete
+// document logic so that the logic for deleting one document can be shared between the delete
+// document function and the delete documents function.
+// the calling code is responsible for committing the transaction 
+func deleteDocumentHelper(
 	ctx context.Context,
+	txQueries *sqlc.Queries,
 	documentId uuid.UUID,
-) error {
-	// start a transaction
-	tx, err := dr.pool.Begin(ctx)
-	if err != nil {
-		return service.RepoImpl("failed to begin a database transaction", err)
-	}
-	defer tx.Rollback(ctx)
-	txQueries := dr.queries.WithTx(tx)
+) (err error) {
 	// delete any rows in the permissions table that reference that document
 	// this should use the index on the permissions table using the document column
 	_, err = txQueries.DeletePermissionByDocument(
@@ -323,6 +315,31 @@ func (dr *DocumentRepository) DeleteDocument(
 			nil,
 		)
 	}
+	return err
+}
+
+// what does it mean for a document to be deleted: only support hard deletion
+// - delete the document in the documents table and all permissions on the document
+//	 in the permissions table
+// - publish an event notifying other services that the document has been deleted
+// decided to use hard deletion because it is simpler to implement and understand 
+// by users
+// decided not to use cascading deletes because of hidden potential for mistakes
+func (dr *DocumentRepository) DeleteDocument(
+	ctx context.Context,
+	documentId uuid.UUID,
+) error {
+	// start a transaction
+	tx, err := dr.pool.Begin(ctx)
+	if err != nil {
+		return service.RepoImpl("failed to begin a database transaction", err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := dr.queries.WithTx(tx)
+	err = deleteDocumentHelper(ctx, txQueries, documentId)
+	if err != nil {
+		return err
+	}
 	err = tx.Commit(ctx)
 	if err != nil {
 		return service.RepoImpl(
@@ -331,6 +348,37 @@ func (dr *DocumentRepository) DeleteDocument(
 		)
 	}
 	return nil
+}
+
+func (dr *DocumentRepository) DeleteDocuments(
+	ctx context.Context,
+	documentIds uuid.UUIDs,
+	userId uuid.UUID,
+) (err error) {
+	if len(documentIds) < 1 {
+		return service.InvalidInput("expected at least one documentId", nil)
+	}
+	// TODO: refactor this to use job ids and support job status for batch delete
+	// start a transaction, this will be a long running transaction
+	tx, err := dr.pool.Begin(ctx)
+	if err != nil {
+		return service.RepoImpl("failed to create a database transaction", err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := dr.queries.WithTx(tx)
+	// design decision, don't support partial success or partial failures
+	// either all the documents are deleted or none of them are
+	for _, documentId := range documentIds {
+		err = deleteDocumentHelper(ctx, txQueries, documentId)
+		if err != nil {
+			return err
+		}
+	}
+	err = tx.Commit(ctx)
+	if err != nil {
+		return service.RepoImpl("failed to commit transaction", err)
+	}
+	return err
 }
 
 func parseDocumentPermission(

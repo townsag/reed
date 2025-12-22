@@ -100,6 +100,7 @@ type DocumentRepository interface {
 	GetDocument(ctx context.Context, documentId uuid.UUID) (document *Document, err error)
 	UpdateDocument(ctx context.Context, documentId uuid.UUID, documentName *string, documentDescription *string) (err error)
 	DeleteDocument(ctx context.Context, documentId uuid.UUID) (err error)
+	DeleteDocuments(ctx context.Context, documentIds uuid.UUIDs, userId uuid.UUID) (err error)
 	// list the documents that are associated with that user at those permission levels
 	ListDocumentsByPrincipal(ctx context.Context, principalId uuid.UUID, permissions []PermissionLevel, cursor *Cursor, pageSize int32) (documentPermissions []DocumentPermission, cursorResp *Cursor, err error)
 	GetPermissionOfPrincipalOnDocument(ctx context.Context, documentId uuid.UUID, principalId uuid.UUID) (permission Permission, err error)
@@ -185,6 +186,20 @@ func (ds *DocumentService) DeleteDocument(
 	if err != nil {
 		if _, ok := err.(DomainError); !ok {
 			err = RepoImpl("unexpected error when deleting document", err)
+		}
+	}
+	return err
+}
+
+func (ds *DocumentService) DeleteDocuments(
+	ctx context.Context,
+	documentIds uuid.UUIDs,
+	userId uuid.UUID,
+) (err error) {
+	err = ds.documentRepo.DeleteDocuments(ctx, documentIds, userId)
+	if err != nil{
+		if _, ok := err.(DomainError); !ok {
+			err = RepoImpl("unexpected error when deleting documents", err)
 		}
 	}
 	return err

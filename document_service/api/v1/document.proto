@@ -10,6 +10,7 @@ service DocumentService {
     rpc GetDocument (GetDocumentRequest) returns (GetDocumentReply) {}
     rpc UpdateDocument (UpdateDocumentRequest) returns (google.protobuf.Empty) {}
     rpc DeleteDocument (DeleteDocumentRequest) returns (google.protobuf.Empty) {}
+    rpc DeleteDocuments (DeleteDocumentsRequest) returns (google.protobuf.Empty) {}
 
     rpc ListDocumentsByPrincipal (ListDocumentByPrincipalRequest) returns (ListDocumentsByPrincipalReply) {}
     // this is meant to be an inexpensive rpc for authentication
@@ -99,6 +100,12 @@ message DeleteDocumentRequest {
     string user_id = 2;
 }
 
+// this should probably be reimplemented as a batch deletion endpoint with a
+// job id that can be queried for status
+message DeleteDocumentsRequest {
+    repeated string document_ids = 1;
+    string user_id = 2;
+}
 
 message ListDocumentByPrincipalRequest {
     string principal_id = 1;

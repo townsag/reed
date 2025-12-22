@@ -104,6 +104,21 @@ func (c *DocumentServiceClient) DeleteDocument(
 	return err
 }
 
+func (c *DocumentServiceClient) DeleteDocuments(
+	ctx context.Context,
+	documentIds uuid.UUIDs,
+	userId uuid.UUID,
+) error {
+	_, err := c.client.DeleteDocuments(
+		ctx,
+		&pb.DeleteDocumentsRequest{
+			DocumentIds: documentIds.Strings(),
+			UserId: userId.String(),
+		},
+	)
+	return err
+}
+
 func (c *DocumentServiceClient) ListDocumentsByPrincipal(
 	ctx context.Context,
 	principalId uuid.UUID,

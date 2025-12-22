@@ -183,3 +183,93 @@ func TestUpdateDocument_NilInputs_Unit(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteDocumentsIntegrations(t *testing.T) {
+	// create a document repository object that is connected to the database
+	documentRepo := createTestingDocumentRepo(t)
+	// add two documents to the database
+	dummyUser := uuid.New()
+	documentAID, err := documentRepo.CreateDocument(
+		t.Context(), dummyUser, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create a document with error: %v", err)
+	}
+	documentBID, err := documentRepo.CreateDocument(
+		t.Context(), dummyUser, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create a document with error: %v", err)
+	}
+	// verify that each document was successfully created
+	for _, documentId := range []uuid.UUID{documentAID, documentBID} {
+		_, err = documentRepo.GetDocument(t.Context(), documentId)
+		if err != nil {
+			t.Fatalf("failed to retrieve the recently created document: %v", err)
+		}
+	}
+	// perform a delete documents operation with both document ids 
+	err = documentRepo.DeleteDocuments(t.Context(), []uuid.UUID{ documentAID, documentBID}, dummyUser)
+	// verify that the result is not a error
+	if err != nil {
+		t.Fatalf("failed to bulk delete document: %v", err)
+	}
+	// verify that each document has been deleted by calling get document on each document 
+	for _, documentId := range []uuid.UUID{documentAID, documentBID} {
+		_, err = documentRepo.GetDocument(t.Context(), documentId)
+		if err == nil {
+			t.Error(
+				"want a not found error when trying to retrieve a deleted document " + 
+				"instead found nil",
+			)
+		}
+	}
+}
+
+func TestDeleteDocuments_NotFound_Integration(t *testing.T) {
+	// create a document repository object that is connected to a database
+	documentRepository := createTestingDocumentRepo(t)
+	// add a document to the database
+	dummyUserId := uuid.New()
+	documentId, err := documentRepository.CreateDocument(
+		t.Context(), dummyUserId, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("failed to create a document: %v", err)
+	}
+	// verify that the added document is in the database
+	_, err = documentRepository.GetDocument(t.Context(), documentId)
+	if err != nil {
+		t.Fatalf("failed to read a document: %v", err)
+	}
+	// send a delete documents request with the added document and with a document that does not exist
+	err = documentRepository.DeleteDocuments(
+		t.Context(), []uuid.UUID{documentId, uuid.New()},dummyUserId,
+	)
+	// verify that the operation returns an error
+	if err == nil {
+		t.Fatal("when deleting a document that did not exist in a batch delete expected an error but got nil")
+	}
+	// verify that the created document is still there after the delete documents attempt failed
+	_, err = documentRepository.GetDocument(t.Context(), documentId)
+	if err != nil {
+		t.Fatalf("failed to retrieve the document after the delete documents call failed with err: %v", err)
+	}
+}
+
+func TestDeleteDocuments_EmptyArray_Unit(t *testing.T) {
+	// create a document repository object that does not have access to the database
+	documentRepo := &repository.DocumentRepository{}
+	// call the delete documents function with an empty list
+	dummyUser := uuid.New()
+	err := documentRepo.DeleteDocuments(t.Context(), []uuid.UUID{}, dummyUser)
+	// verify that the result of the operation is an error of the correct type
+	if err != nil {
+		var invalidInputError *service.InvalidInputError
+		if !errors.As(err, &invalidInputError) {
+			t.Fatalf("when calling delete documents with an empty list, want: invalid input error, got: %v", err)
+		}
+	} else {
+		t.Fatalf("when calling delete documents with an empty list, want: invalid input error, got: nil")
+	}
+}

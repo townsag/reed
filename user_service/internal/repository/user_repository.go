@@ -16,6 +16,10 @@ import (
 	"github.com/townsag/reed/user_service/internal/service"
 )
 
+// ensure at compile time that the user repository struct implements that user
+// repository interface that is defined at the service level
+var _ service.UserRepository = (*UserRepository)(nil)
+
 // TODO: figure out what the logging story is for the repo object?
 // TODO: figure out the error handling story for the repo object?
 //		- do we need to record that we got a not found error and then raise the not found error
@@ -67,7 +71,7 @@ func (r *UserRepository) CreateUser(
 	email string,
 	maxDocuments int32, 
 	password string,
-) (uuid.UUID, error) {
+) (uuid.UUID, service.DomainError) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return uuid.Nil, service.RepoImpl("error creating hash of users new password", err)
@@ -102,7 +106,10 @@ func (r *UserRepository) CreateUser(
 	return userId, nil
 }
 
-func (r *UserRepository) GetUserById(ctx context.Context, userId uuid.UUID) (*service.User, error) {
+func (r *UserRepository) GetUserById(
+	ctx context.Context,
+	userId uuid.UUID,
+) (*service.User, service.DomainError) {
 	user, err := r.queries.GetUserById(ctx, pgtype.UUID{ Bytes: userId, Valid: true })
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -114,7 +121,7 @@ func (r *UserRepository) GetUserById(ctx context.Context, userId uuid.UUID) (*se
 	return repositoryToService(user), nil
 }
 
-func (r *UserRepository) GetUserByEmail(ctx context.Context, userEmail string) (*service.User, error) {
+func (r *UserRepository) GetUserByEmail(ctx context.Context, userEmail string) (*service.User, service.DomainError) {
 	user, err := r.queries.GetUserByEmail(ctx, userEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -126,7 +133,7 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, userEmail string) (
 	return repositoryToService(user), nil
 }
 
-func (r *UserRepository) DeactivateUser (ctx context.Context, userId uuid.UUID) error {
+func (r *UserRepository) DeactivateUser (ctx context.Context, userId uuid.UUID) service.DomainError {
 	_, err := r.queries.DeactivateUser(ctx, pgtype.UUID{ Bytes: userId, Valid: true })
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -138,7 +145,12 @@ func (r *UserRepository) DeactivateUser (ctx context.Context, userId uuid.UUID) 
 	return nil
 }
 
-func (r *UserRepository) ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) error {
+func (r *UserRepository) ModifyPassword(
+	ctx context.Context, 
+	userId uuid.UUID, 
+	oldPassword string, 
+	newPassword string,
+) service.DomainError {
 	// create a transaction
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -180,6 +192,35 @@ func (r *UserRepository) ModifyPassword(ctx context.Context, userId uuid.UUID, o
 		return service.RepoImpl("error committing the update password hash transaction", err)
 	} 
 	return nil
+}
+
+func (r *UserRepository) ValidatePassword(
+	ctx context.Context,
+	userId uuid.UUID,
+	password string,
+) (bool, service.DomainError) {
+	// read the password associated with the user
+	user, err := r.queries.GetUserForUpdate(
+		ctx, pgtype.UUID{ Bytes: userId, Valid: true },
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, service.NotFound(fmt.Sprintf(
+				"no user found with user id: %s for checking password", 
+				userId,
+			))
+		} else {
+			return false, service.RepoImpl(
+				fmt.Sprintf("unexpected error found when reading user with id: %s", userId.String()),
+				err,
+			)
+		}
+	}
+	// hash the given users password and compare the hashed password to the stored hashed password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(password)); err != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 // consider adding something like this

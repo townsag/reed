@@ -196,28 +196,28 @@ func (r *UserRepository) ModifyPassword(
 
 func (r *UserRepository) ValidatePassword(
 	ctx context.Context,
-	userId uuid.UUID,
+	userName string,
 	password string,
 ) (bool, service.DomainError) {
 	// read the password associated with the user
-	user, err := r.queries.GetUserForUpdate(
-		ctx, pgtype.UUID{ Bytes: userId, Valid: true },
+	row, err := r.queries.GetHashedPassword(
+		ctx, userName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, service.NotFound(fmt.Sprintf(
-				"no user found with user id: %s for checking password", 
-				userId,
+				"no user found with user name: %s for checking password", 
+				userName,
 			))
 		} else {
 			return false, service.RepoImpl(
-				fmt.Sprintf("unexpected error found when reading user with id: %s", userId.String()),
+				fmt.Sprintf("unexpected error found when reading user with username: %s", userName),
 				err,
 			)
 		}
 	}
 	// hash the given users password and compare the hashed password to the stored hashed password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.HashedPassword), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(row.HashedPassword), []byte(password)); err != nil {
 		return false, nil
 	}
 	return true, nil

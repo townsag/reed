@@ -34,7 +34,7 @@ type UserRepository interface {
 	// repository cleaner because the service does not have to hold an interactive transaction in 
 	// case another process changes the users password while the service is validating it
 	ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) (DomainError)
-	ValidatePassword(ctx context.Context, userId uuid.UUID, password string) (bool, DomainError)
+	ValidatePassword(ctx context.Context, userName string, password string) (bool, DomainError)
 }
 
 // in the case of repositories, we wanted to be able to swap out multiple different repository
@@ -139,11 +139,11 @@ func (us *UserService) ChangePassword(ctx context.Context, userId uuid.UUID, old
 
 func (us *UserService) ValidatePassword(
 	ctx context.Context,
-	userId uuid.UUID,
+	userName string,
 	password string,
 ) (bool, error) {
 	isValid, err := us.repo.ValidatePassword(
-		ctx, userId, password,
+		ctx, userName, password,
 	)
 	if err != nil {
 		slog.ErrorContext(

@@ -164,13 +164,12 @@ func (s *UserServiceServerImpl) ValidatePassword(
 		slog.WarnContext(ctx, "the received user password is empty string")
 		return nil, status.Error(codes.InvalidArgument, "user_password is a required argument")
 	}
-	// parse the user id 
-	userId, err := uuid.Parse(req.UserId)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "user_id must be a valid uuid")
+	if req.UserName == "" {
+		slog.WarnContext(ctx, "the received username is empty string")
+		return nil, status.Error(codes.InvalidArgument, "user_name cannot be empty string")
 	}
 	// call the validate password method on the user service object
-	isValid, err := s.userService.ValidatePassword(ctx, userId, req.UserPassword)
+	isValid, err := s.userService.ValidatePassword(ctx, req.UserName, req.UserPassword)
 	// return either an error indicating a failure to read information
 	if err != nil {
 		return nil, serviceToGRPCError(err)

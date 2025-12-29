@@ -82,13 +82,13 @@ func (c *UserServiceClient) ChangeUserPassword(
 
 func (c *UserServiceClient) ValidatePassword(
 	ctx context.Context,
-	userId uuid.UUID,
+	userName string,
 	password string,
 ) (bool, error) {
 	reply, err := c.client.ValidatePassword(
 		ctx,
 		&pb.ValidatePasswordRequest{
-			UserId: userId.String(),
+			UserName: userName,
 			UserPassword: password,
 		},
 	)

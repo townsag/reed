@@ -10,6 +10,7 @@ service UserService {
     rpc DeactivateUser (DeactivateUserRequest) returns (google.protobuf.Empty) {}
     // rpc LoginUser (LoginUserRequest) returns (LoginUserReply) {}
     rpc ChangeUserPassword (ChangeUserPasswordRequest) returns (google.protobuf.Empty) {}
+    rpc ValidatePassword (ValidatePasswordRequest) returns (ValidatePasswordReply) {}
 }
 
 message User {
@@ -57,4 +58,15 @@ message ChangeUserPasswordRequest {
     string user_id = 1;
     string old_password = 2;
     string new_password = 3;
+}
+
+message ValidatePasswordRequest {
+    string user_id = 1;
+    string user_password = 2;
+}
+
+message ValidatePasswordReply {
+    bool is_valid = 1;
+    // in the future we can add other information here like scopes or limits that may 
+    // be useful to include in a generated token
 }

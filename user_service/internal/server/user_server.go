@@ -153,8 +153,30 @@ func (s *UserServiceServerImpl) ChangePassword(
 	return &emptypb.Empty{}, nil
 }
 
-/*
-CHECKPOINT:
-- you were modifying the user server to use uuids instead of integers
-- all the tests are broken now lol
-*/
+func (s *UserServiceServerImpl) ValidatePassword(
+	ctx context.Context,
+	req *pb.ValidatePasswordRequest,
+) (*pb.ValidatePasswordReply, error) {
+	// validate that the password is present
+	if req.UserPassword == "" {
+		// we use warn context because the context includes a span id and this loggers handler
+		// function will insert the span id into the formatted log
+		slog.WarnContext(ctx, "the received user password is empty string")
+		return nil, status.Error(codes.InvalidArgument, "user_password is a required argument")
+	}
+	// parse the user id 
+	userId, err := uuid.Parse(req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "user_id must be a valid uuid")
+	}
+	// call the validate password method on the user service object
+	isValid, err := s.userService.ValidatePassword(ctx, userId, req.UserPassword)
+	// return either an error indicating a failure to read information
+	if err != nil {
+		return nil, serviceToGRPCError(err)
+	}
+	// or a response indicating the validity of the password
+	return &pb.ValidatePasswordReply{
+		IsValid: isValid,
+	}, nil
+}

@@ -25,15 +25,16 @@ type User struct {
 // the repository object has to conform to. This allows multiple repos
 // to implement the UserRepository interface
 type UserRepository interface {
-	CreateUser(ctx context.Context, userName string, email string, maxDocuments int32, password string) (userId uuid.UUID, err error)
-	GetUserById(ctx context.Context, userId uuid.UUID) (*User, error)
-	GetUserByEmail(ctx context.Context, userEmail string) (*User, error)
-	DeactivateUser(ctx context.Context, userId uuid.UUID) (error)
+	CreateUser(ctx context.Context, userName string, email string, maxDocuments int32, password string) (userId uuid.UUID, err DomainError)
+	GetUserById(ctx context.Context, userId uuid.UUID) (*User, DomainError)
+	GetUserByEmail(ctx context.Context, userEmail string) (*User, DomainError)
+	DeactivateUser(ctx context.Context, userId uuid.UUID) (DomainError)
 	// push the responsibility for hashing passwords down to the repository layer, the user service
 	// just deals in plaintext passwords. This makes the interactions between the service and the 
 	// repository cleaner because the service does not have to hold an interactive transaction in 
 	// case another process changes the users password while the service is validating it
-	ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) (error)
+	ModifyPassword(ctx context.Context, userId uuid.UUID, oldPassword string, newPassword string) (DomainError)
+	ValidatePassword(ctx context.Context, userId uuid.UUID, password string) (bool, DomainError)
 }
 
 // in the case of repositories, we wanted to be able to swap out multiple different repository
@@ -85,14 +86,6 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 	}
 	userId, err := us.repo.CreateUser(ctx, userName, email, resolvedMaxDocuments, password)
 	if err != nil {
-		// we have no guarantee here that the error returned by the repo is a semantic / domain error
-		// defined by the service package. Here we can perform a runtime check on the error to see
-		// if it is one of our domain errors. If it is not, we can instead wrap it and return a domain error
-
-		// I am still on the fence about this pattern, it is a bit verbose
-		if _, ok := err.(DomainError); !ok {
-			err = RepoImpl("unknown error creating user", err)
-		}
 		slog.ErrorContext(
 			ctx,
 			"failed to create user because of repository error",
@@ -107,9 +100,6 @@ func (us *UserService) CreateUser(ctx context.Context, userName string, email st
 func (us *UserService) GetUser(ctx context.Context, userId uuid.UUID) (*User, error) {
 	user, err := us.repo.GetUserById(ctx, userId)
 	if err != nil {
-		if _, ok := err.(DomainError); !ok {
-			err = RepoImpl("unknown error getting user", err)
-		}
 		slog.ErrorContext(
 			ctx,
 			"failed to get user because of repository error",
@@ -125,9 +115,6 @@ func (us *UserService) GetUser(ctx context.Context, userId uuid.UUID) (*User, er
 func (us *UserService) DeactivateUser(ctx context.Context, userId uuid.UUID) error {
 	err := us.repo.DeactivateUser(ctx, userId)
 	if err != nil {
-		if _, ok := err.(DomainError); !ok {
-			err = RepoImpl("unknown error deactivating user", err)
-		}
 		slog.ErrorContext(
 			ctx,
 			"failed to deactivate user because of repository error",
@@ -141,9 +128,6 @@ func (us *UserService) ChangePassword(ctx context.Context, userId uuid.UUID, old
 	// TODO: add regex validation of the password
 	err := us.repo.ModifyPassword(ctx, userId, oldPassword, newPassword)
 	if err != nil {
-		if _, ok := err.(DomainError); !ok {
-			err = RepoImpl("unknown error modifying users password", err)
-		}
 		slog.ErrorContext(
 			ctx,
 			"failed to change password because of repository error",
@@ -151,6 +135,25 @@ func (us *UserService) ChangePassword(ctx context.Context, userId uuid.UUID, old
 		)
 	}
 	return err
+}
+
+func (us *UserService) ValidatePassword(
+	ctx context.Context,
+	userId uuid.UUID,
+	password string,
+) (bool, error) {
+	isValid, err := us.repo.ValidatePassword(
+		ctx, userId, password,
+	)
+	if err != nil {
+		slog.ErrorContext(
+			ctx,
+			"failed to validate password because of a repository error",
+			"error", err.Error(),
+		)
+		return false, err
+	}
+	return isValid, nil
 }
 
 // Questions:

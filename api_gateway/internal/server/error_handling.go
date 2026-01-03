@@ -11,3 +11,5 @@ import (
 func ErrorHandlerFunc(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, err.Error(), http.StatusBadRequest)
 }
+// my understanding is that this function is used to handle errors that the generated
+// code encounters when parsing request query parameters and path parameters

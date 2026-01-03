@@ -8,6 +8,7 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -18,6 +19,10 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+)
+
+const (
+	BearerAuthScopes = "bearerAuth.Scopes"
 )
 
 // Defines values for PermissionLevel.
@@ -33,18 +38,18 @@ const (
 	PrincipalPrincipalTypeUser  PrincipalPrincipalType = "user"
 )
 
-// CreatedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+// CreatedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 type CreatedAt = int64
 
 // Document defines model for Document.
 type Document struct {
-	// CreatedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+	// CreatedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 	CreatedAt           CreatedAt          `json:"createdAt"`
 	DocumentDescription string             `json:"documentDescription"`
 	DocumentId          openapi_types.UUID `json:"documentId"`
 	DocumentName        string             `json:"documentName"`
 
-	// LastModifiedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+	// LastModifiedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 	LastModifiedAt LastModifiedAt `json:"lastModifiedAt"`
 }
 
@@ -53,17 +58,17 @@ type Error struct {
 	Message *string `json:"message,omitempty"`
 }
 
-// LastModifiedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+// LastModifiedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 type LastModifiedAt = int64
 
 // Permission defines model for Permission.
 type Permission struct {
-	// CreatedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+	// CreatedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 	CreatedAt  CreatedAt          `json:"createdAt"`
 	CreatedBy  openapi_types.UUID `json:"createdBy"`
 	DocumentId openapi_types.UUID `json:"documentId"`
 
-	// LastModifiedAt Timistamp measurred in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+	// LastModifiedAt Timestamp measured in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
 	LastModifiedAt  LastModifiedAt  `json:"lastModifiedAt"`
 	PermissionLevel PermissionLevel `json:"permissionLevel"`
 	Principal       Principal       `json:"principal"`
@@ -101,11 +106,23 @@ type UserId = openapi_types.UUID
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
+// LoginResponse defines model for LoginResponse.
+type LoginResponse struct {
+	ExpiresIn int32  `json:"expiresIn"`
+	Token     string `json:"token"`
+}
+
 // Unauthenticated defines model for Unauthenticated.
 type Unauthenticated = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// PostAuthLoginJSONBody defines parameters for PostAuthLogin.
+type PostAuthLoginJSONBody struct {
+	Password string `json:"password"`
+	UserName string `json:"userName"`
+}
 
 // DeleteDocumentJSONBody defines parameters for DeleteDocument.
 type DeleteDocumentJSONBody struct {
@@ -117,7 +134,7 @@ type GetDocumentParams struct {
 	// Cursor a cursor can optionally be supplied for pagination
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 
-	// Limit the number of documents to retreive in a page
+	// Limit the number of documents to retrieve in a page
 	Limit *string `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
@@ -139,7 +156,7 @@ type GetDocumentDocumentIdPermissionParams struct {
 	// Cursor a cursor can optionally be supplied for pagination
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 
-	// Limit the number of documents to retreive in a page
+	// Limit the number of documents to retrieve in a page
 	Limit *string `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
@@ -167,6 +184,9 @@ type PutUserUserIdJSONBody struct {
 	OldPassword string `json:"oldPassword"`
 }
 
+// PostAuthLoginJSONRequestBody defines body for PostAuthLogin for application/json ContentType.
+type PostAuthLoginJSONRequestBody PostAuthLoginJSONBody
+
 // DeleteDocumentJSONRequestBody defines body for DeleteDocument for application/json ContentType.
 type DeleteDocumentJSONRequestBody DeleteDocumentJSONBody
 
@@ -190,6 +210,9 @@ type PutUserUserIdJSONRequestBody PutUserUserIdJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// get a token
+	// (POST /auth/login)
+	PostAuthLogin(w http.ResponseWriter, r *http.Request)
 	// batch delete endpoint for deleting lists of documents
 	// (DELETE /document)
 	DeleteDocument(w http.ResponseWriter, r *http.Request)
@@ -246,8 +269,28 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// PostAuthLogin operation middleware
+func (siw *ServerInterfaceWrapper) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAuthLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteDocument operation middleware
 func (siw *ServerInterfaceWrapper) DeleteDocument(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteDocument(w, r)
@@ -264,6 +307,12 @@ func (siw *ServerInterfaceWrapper) DeleteDocument(w http.ResponseWriter, r *http
 func (siw *ServerInterfaceWrapper) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetDocumentParams
@@ -298,6 +347,12 @@ func (siw *ServerInterfaceWrapper) GetDocument(w http.ResponseWriter, r *http.Re
 // PostDocument operation middleware
 func (siw *ServerInterfaceWrapper) PostDocument(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostDocument(w, r)
 	}))
@@ -322,6 +377,12 @@ func (siw *ServerInterfaceWrapper) DeleteDocumentDocumentId(w http.ResponseWrite
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "documentId", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteDocumentDocumentId(w, r, documentId)
@@ -348,6 +409,12 @@ func (siw *ServerInterfaceWrapper) GetDocumentDocumentId(w http.ResponseWriter, 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDocumentDocumentId(w, r, documentId)
 	}))
@@ -373,6 +440,12 @@ func (siw *ServerInterfaceWrapper) PutDocumentDocumentId(w http.ResponseWriter, 
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutDocumentDocumentId(w, r, documentId)
 	}))
@@ -397,6 +470,12 @@ func (siw *ServerInterfaceWrapper) GetDocumentDocumentIdPermission(w http.Respon
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "documentId", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetDocumentDocumentIdPermissionParams
@@ -442,6 +521,12 @@ func (siw *ServerInterfaceWrapper) PostDocumentDocumentIdPermission(w http.Respo
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostDocumentDocumentIdPermission(w, r, documentId)
 	}))
@@ -475,6 +560,12 @@ func (siw *ServerInterfaceWrapper) DeleteDocumentDocumentIdPermissionPrincipalPr
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteDocumentDocumentIdPermissionPrincipalPrincipalId(w, r, documentId, principalId)
@@ -510,6 +601,12 @@ func (siw *ServerInterfaceWrapper) GetDocumentDocumentIdPermissionPrincipalPrinc
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDocumentDocumentIdPermissionPrincipalPrincipalId(w, r, documentId, principalId)
 	}))
@@ -544,6 +641,12 @@ func (siw *ServerInterfaceWrapper) PutDocumentDocumentIdPermissionPrincipalPrinc
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutDocumentDocumentIdPermissionPrincipalPrincipalId(w, r, documentId, principalId)
 	}))
@@ -557,6 +660,12 @@ func (siw *ServerInterfaceWrapper) PutDocumentDocumentIdPermissionPrincipalPrinc
 
 // PostUser operation middleware
 func (siw *ServerInterfaceWrapper) PostUser(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostUser(w, r)
@@ -583,6 +692,12 @@ func (siw *ServerInterfaceWrapper) DeleteUserUserId(w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteUserUserId(w, r, userId)
 	}))
@@ -608,6 +723,12 @@ func (siw *ServerInterfaceWrapper) GetUserUserId(w http.ResponseWriter, r *http.
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetUserUserId(w, r, userId)
 	}))
@@ -632,6 +753,12 @@ func (siw *ServerInterfaceWrapper) PutUserUserId(w http.ResponseWriter, r *http.
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutUserUserId(w, r, userId)
@@ -764,6 +891,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc("POST "+options.BaseURL+"/auth/login", wrapper.PostAuthLogin)
 	m.HandleFunc("DELETE "+options.BaseURL+"/document", wrapper.DeleteDocument)
 	m.HandleFunc("GET "+options.BaseURL+"/document", wrapper.GetDocument)
 	m.HandleFunc("POST "+options.BaseURL+"/document", wrapper.PostDocument)
@@ -786,40 +914,42 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"AAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

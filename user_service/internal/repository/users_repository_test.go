@@ -270,3 +270,70 @@ func TestModifyPasswordInvalidIntegration(t *testing.T) {
 		t.Errorf("when trying to update a users password with the wrong old password, want PasswordMatchError, got: %v", err)
 	}
 }
+
+func TestValidatePassword_Valid_Integration(t *testing.T) {
+	// create an instance of the users repository that has access to a running 
+	// database instance
+	conn, err := setupPostgresContainer()
+	if err != nil {
+		t.Fatalf("unable to connect to the postgres container: %v", err)
+	}
+	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
+	// create a dummy user
+	userId, err := userRepo.CreateUser(
+		t.Context(), "testUser8", "test8@example.com", 12, "asdf",
+	)
+	if err != nil {
+		t.Fatalf("failed to create dummy user with error: %v", err)
+	}
+	// validate the users password against the password stored in the database for the dummy user
+	// it should be correct 
+	resultId, isValid, err := userRepo.ValidatePassword(t.Context(), "testUser8", "asdf")
+	if err != nil {
+		t.Fatalf("failed to validate password with error: %v", err)
+	}
+	if !isValid {
+		t.Errorf(
+			"want: isValid to be true for a valid password, got: %v", isValid,
+		)
+	}
+	if userId != resultId {
+		t.Errorf(
+			"want: validated users userId matches given userID: %v, got: %v",
+			userId, resultId,
+		)
+	}
+}
+
+func TestValidatePassword_Invalid_Integration(t *testing.T) {
+	// create an instance of the user repository that has access to a running
+	// database instance
+	conn, err := setupPostgresContainer()
+	if err != nil {
+		t.Fatalf("unable to connect to the postgres container: %v", err)
+	}
+	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
+	// create a dummy user
+	_, err = userRepo.CreateUser(
+		t.Context(), "testUser9", "test9@example.com", 12, "asdf",
+	)
+	if err != nil {
+		t.Fatalf("failed to create dummy user with error: %v", err)
+	}
+	// validate that a password other than the dummy users password is deemed as invalid
+	resultId, isValid, err := userRepo.ValidatePassword(t.Context(), "testUser9", "qwer")
+	if err != nil {
+		t.Fatalf("failed to validate password with error: %v", err)
+	}
+	if isValid {
+		t.Errorf(
+			"want: isValid to be false for an invalid password, got: %v", isValid,
+		)
+	}
+	if uuid.Nil != resultId {
+		t.Errorf(
+			"want: validated users id to be nil uuid, got: %v",
+			resultId,
+		)
+	}
+}

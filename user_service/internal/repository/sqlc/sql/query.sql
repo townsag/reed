@@ -16,6 +16,11 @@ FOR UPDATE;
 -- reading the row with for update locks the record at the row level so that
 -- other operations cannot update, delete, or select for update on that row
 
+-- name: GetHashedPassword :one
+SELECT id, hashed_password
+FROM users
+WHERE user_name = $1;
+
 -- name: GetUserByEmail :one
 SELECT id, user_name, email, max_documents, hashed_password, is_active, created_at, last_modified
 FROM users

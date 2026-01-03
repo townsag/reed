@@ -5,7 +5,6 @@ import (
 	"log"
 
 	"github.com/townsag/reed/api_gateway/internal/server"
-	"github.com/townsag/reed/api_gateway/internal/service"
 	"github.com/townsag/reed/api_gateway/internal/config"
 
 	"github.com/townsag/reed/user_service/pkg/client"
@@ -19,14 +18,17 @@ func main() {
 		log.Fatalf("failed to create a user service client with error: %s", err.Error())
 	}
 	// create an instance of the struct which implements the server.ServerInterface
-	service := service.NewService(userServiceClient)
+	service := server.NewService(userServiceClient)
 	// create a request validation middleware
 	validationMiddleware := server.RequestValidationMiddleware()
 	// create an instance of the handler 
 	h := server.HandlerWithOptions(
 		service, server.StdHTTPServerOptions{
 			BaseURL: "todo",
-			Middlewares: []server.MiddlewareFunc{validationMiddleware},
+			Middlewares: []server.MiddlewareFunc{
+				server.AuthMiddleware,
+				validationMiddleware, 
+			},
 			ErrorHandlerFunc: server.ErrorHandlerFunc,
 		},
 	)

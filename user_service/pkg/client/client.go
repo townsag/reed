@@ -79,3 +79,27 @@ func (c *UserServiceClient) ChangeUserPassword(
 	)
 	return err
 }
+
+func (c *UserServiceClient) ValidatePassword(
+	ctx context.Context,
+	userName string,
+	password string,
+) (uuid.UUID, bool, error) {
+	reply, err := c.client.ValidatePassword(
+		ctx,
+		&pb.ValidatePasswordRequest{
+			UserName: userName,
+			UserPassword: password,
+		},
+	)
+	if err != nil {
+		return uuid.Nil, false, err
+	} else {
+		// parse the uuid from the reply
+		userId, err := uuid.Parse(*reply.UserId)
+		if err != nil {
+			return uuid.Nil, false, err
+		}
+		return userId, reply.IsValid, nil
+	}
+}

@@ -1,4 +1,4 @@
-package util
+package server
 
 import (
 	"net/http"
@@ -6,12 +6,10 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	"github.com/townsag/reed/api_gateway/internal/server"
 )
 
 func SendError(w http.ResponseWriter, code int, message string) {
-	responseError := server.Error{
+	responseError := Error{
 		Message: &message,
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -10,3 +10,7 @@ var UserServiceAddr string = util.GetEnvWithDefault(
 )
 
 const TIMEOUT_MILLISECONDS = 500 * time.Millisecond
+
+var JWTSecretKey string = util.GetEnvWithDefault(
+	"JWT_SIGNING_KEY", "asdf",
+)

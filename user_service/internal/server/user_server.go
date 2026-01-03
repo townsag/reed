@@ -169,13 +169,15 @@ func (s *UserServiceServerImpl) ValidatePassword(
 		return nil, status.Error(codes.InvalidArgument, "user_name cannot be empty string")
 	}
 	// call the validate password method on the user service object
-	isValid, err := s.userService.ValidatePassword(ctx, req.UserName, req.UserPassword)
+	userId, isValid, err := s.userService.ValidatePassword(ctx, req.UserName, req.UserPassword)
 	// return either an error indicating a failure to read information
 	if err != nil {
 		return nil, serviceToGRPCError(err)
 	}
 	// or a response indicating the validity of the password
+	userIdStr := userId.String()
 	return &pb.ValidatePasswordReply{
+		UserId: &userIdStr,
 		IsValid: isValid,
 	}, nil
 }

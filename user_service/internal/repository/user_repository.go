@@ -198,19 +198,19 @@ func (r *UserRepository) ValidatePassword(
 	ctx context.Context,
 	userName string,
 	password string,
-) (bool, service.DomainError) {
+) (uuid.UUID, bool, service.DomainError) {
 	// read the password associated with the user
 	row, err := r.queries.GetHashedPassword(
 		ctx, userName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, service.NotFound(fmt.Sprintf(
+			return uuid.Nil, false, service.NotFound(fmt.Sprintf(
 				"no user found with user name: %s for checking password", 
 				userName,
 			))
 		} else {
-			return false, service.RepoImpl(
+			return uuid.Nil, false, service.RepoImpl(
 				fmt.Sprintf("unexpected error found when reading user with username: %s", userName),
 				err,
 			)
@@ -218,9 +218,9 @@ func (r *UserRepository) ValidatePassword(
 	}
 	// hash the given users password and compare the hashed password to the stored hashed password
 	if err := bcrypt.CompareHashAndPassword([]byte(row.HashedPassword), []byte(password)); err != nil {
-		return false, nil
+		return uuid.Nil, false, nil
 	}
-	return true, nil
+	return uuid.UUID(row.ID.Bytes), true, nil
 }
 
 // consider adding something like this

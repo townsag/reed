@@ -280,7 +280,7 @@ func TestValidatePassword_Valid_Integration(t *testing.T) {
 	}
 	var userRepo *repository.UserRepository = repository.NewUserRepository(conn)
 	// create a dummy user
-	_, err = userRepo.CreateUser(
+	userId, err := userRepo.CreateUser(
 		t.Context(), "testUser8", "test8@example.com", 12, "asdf",
 	)
 	if err != nil {
@@ -288,13 +288,19 @@ func TestValidatePassword_Valid_Integration(t *testing.T) {
 	}
 	// validate the users password against the password stored in the database for the dummy user
 	// it should be correct 
-	isValid, err := userRepo.ValidatePassword(t.Context(), "testUser8", "asdf")
+	resultId, isValid, err := userRepo.ValidatePassword(t.Context(), "testUser8", "asdf")
 	if err != nil {
 		t.Fatalf("failed to validate password with error: %v", err)
 	}
 	if !isValid {
 		t.Errorf(
 			"want: isValid to be true for a valid password, got: %v", isValid,
+		)
+	}
+	if userId != resultId {
+		t.Errorf(
+			"want: validated users userId matches given userID: %v, got: %v",
+			userId, resultId,
 		)
 	}
 }
@@ -315,13 +321,19 @@ func TestValidatePassword_Invalid_Integration(t *testing.T) {
 		t.Fatalf("failed to create dummy user with error: %v", err)
 	}
 	// validate that a password other than the dummy users password is deemed as invalid
-	isValid, err := userRepo.ValidatePassword(t.Context(), "testUser9", "qwer")
+	resultId, isValid, err := userRepo.ValidatePassword(t.Context(), "testUser9", "qwer")
 	if err != nil {
 		t.Fatalf("failed to validate password with error: %v", err)
 	}
 	if isValid {
 		t.Errorf(
 			"want: isValid to be false for an invalid password, got: %v", isValid,
+		)
+	}
+	if uuid.Nil != resultId {
+		t.Errorf(
+			"want: validated users id to be nil uuid, got: %v",
+			resultId,
 		)
 	}
 }

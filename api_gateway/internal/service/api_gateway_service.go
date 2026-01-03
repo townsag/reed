@@ -13,56 +13,13 @@ import (
 
 	"github.com/townsag/reed/api_gateway/internal/config"
 	"github.com/townsag/reed/api_gateway/internal/server"
+	"github.com/townsag/reed/api_gateway/internal/util"
 	userService "github.com/townsag/reed/user_service/pkg/client"
 )
 
 // should this generic function should also be able to take any of the returned service level
 // errors as an input?
-func sendError(w http.ResponseWriter, code int, message string) {
-	responseError := server.Error{
-		Message: &message,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(responseError)
-}
-// Decide that each method should implement it's own version of serializing the successful
 
-func sendJsonResponse(w http.ResponseWriter, code int, responseBody interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(responseBody)
-}
-
-func grpcToHttpStatus(err error) int {
-    st, ok := status.FromError(err)
-    if !ok {
-        return http.StatusInternalServerError
-    }
-    
-    switch st.Code() {
-    case codes.InvalidArgument:
-        return http.StatusBadRequest
-    case codes.NotFound:
-        return http.StatusNotFound
-    case codes.AlreadyExists:
-        return http.StatusConflict
-    case codes.PermissionDenied:
-        return http.StatusForbidden
-    case codes.Unauthenticated:
-        return http.StatusUnauthorized
-    case codes.ResourceExhausted:
-        return http.StatusTooManyRequests
-    case codes.Unimplemented:
-        return http.StatusNotImplemented
-    case codes.Unavailable:
-        return http.StatusServiceUnavailable
-    case codes.DeadlineExceeded:
-        return http.StatusGatewayTimeout
-    default:
-        return http.StatusInternalServerError
-    }
-}
 
 var _ server.ServerInterface = (*Service)(nil)
 
@@ -93,7 +50,7 @@ func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var reqBody server.PostAuthLoginJSONRequestBody
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
-		sendError(w, http.StatusBadRequest, fmt.Sprintf("error decoding request body: %s", err.Error()))
+		util.SendError(w, http.StatusBadRequest, fmt.Sprintf("error decoding request body: %s", err.Error()))
 		return
 	}
 	// use the users service client to validate the credentials
@@ -103,16 +60,16 @@ func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 			// if the user is missing, send a 400 error
-			sendError(w, http.StatusNotFound, fmt.Sprintf("no user found with username: %v", reqBody.UserName))
+			util.SendError(w, http.StatusNotFound, fmt.Sprintf("no user found with username: %v", reqBody.UserName))
 			return
 		} else {
-			sendError(w, grpcToHttpStatus(err), err.Error())
+			util.SendError(w, util.GrpcToHttpStatus(err), err.Error())
 			return
 		}
 	}
 	// if the credentials are invalid, send a 401 error
 	if !isValid {
-		sendError(w, http.StatusUnauthorized, "the provided username and password did not match")
+		util.SendError(w, http.StatusUnauthorized, "the provided username and password did not match")
 	}
 	// if the credentials are valid, construct a token that includes the username and a generic scope
 	// us the golang-jwt library to make a token, maybe put this part in a package 
@@ -130,10 +87,10 @@ func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
 	)
 	signedToken, err := token.SignedString([]byte(config.JWTSecretKey))
 	if err != nil {
-		sendError(w, http.StatusInternalServerError, err.Error())
+		util.SendError(w, http.StatusInternalServerError, err.Error())
 	}
 	// return a 200 response with the validated token
-	sendJsonResponse(
+	util.SendJsonResponse(
 		w, http.StatusOK, &server.LoginResponse{
 			ExpiresIn: 1234,
 			Token: signedToken,
@@ -151,12 +108,12 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
 		// use a generic function to send an error on failing to unmarshal the json
-		sendError(w, http.StatusBadRequest, fmt.Sprintf("error decoding request body: %s", err.Error()))
+		util.SendError(w, http.StatusBadRequest, fmt.Sprintf("error decoding request body: %s", err.Error()))
 		return
 	}
 	// perform any application level request validation
 	if err := reqBody.Validate(); err != nil {
-		sendError(w, http.StatusBadRequest, err.Error())
+		util.SendError(w, http.StatusBadRequest, err.Error())
 	}
 	// call the user microservice with the gRPC client
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
@@ -169,12 +126,12 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 		reqBody.MaxDocuments,
 	)
 	if err != nil {
-		sendError(w, grpcToHttpStatus(err), err.Error())
+		util.SendError(w, util.GrpcToHttpStatus(err), err.Error())
 	}
 	// return the userId that is returned by the gRPC client
 	// only the UserId field of the create user reply struct is exported so we 
 	// can directly encode the service reply
-	sendJsonResponse(w, http.StatusCreated, serviceReply)
+	util.SendJsonResponse(w, http.StatusCreated, serviceReply)
 }
 
 // deactivate a user
@@ -185,7 +142,7 @@ func (s *Service) DeleteUserUserId(w http.ResponseWriter, r *http.Request, userI
 	defer cancel()
 	err := s.userServiceClient.DeactivateUser(ctx, userId)
 	if err != nil {
-		sendError(w, grpcToHttpStatus(err), err.Error())
+		util.SendError(w, util.GrpcToHttpStatus(err), err.Error())
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -197,7 +154,7 @@ func (s *Service) GetUserUserId(w http.ResponseWriter, r *http.Request, userId s
 	defer cancel()
 	serviceReply, err := s.userServiceClient.GetUser(ctx, userId)
 	if err != nil {
-		sendError(w, grpcToHttpStatus(err), err.Error())
+		util.SendError(w, util.GrpcToHttpStatus(err), err.Error())
 	}
 	// ignore the returned user id, we don't have to parse it because it 
 	// will be the same as the calling user id 
@@ -209,7 +166,7 @@ func (s *Service) GetUserUserId(w http.ResponseWriter, r *http.Request, userId s
 		UserName: serviceReply.User.UserName,
 	}
 	// return the User object to the client
-	sendJsonResponse(w, http.StatusOK, response)
+	util.SendJsonResponse(w, http.StatusOK, response)
 }
 
 // update a user including the users password
@@ -217,14 +174,14 @@ func (s *Service) PutUserUserId(w http.ResponseWriter, r *http.Request, userId s
 	var reqBody server.PutUserUserIdJSONRequestBody
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
-		sendError(w, http.StatusBadRequest, fmt.Sprintf("error when decoding the request body: %s", err.Error()))
+		util.SendError(w, http.StatusBadRequest, fmt.Sprintf("error when decoding the request body: %s", err.Error()))
 	}
 	// now that we have successfully decoded the json body we need to call the user service 
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
 	defer cancel()
 	err = s.userServiceClient.ChangeUserPassword(ctx, userId, reqBody.OldPassword, reqBody.NewPassword)
 	if err != nil {
-		sendError(w, grpcToHttpStatus(err), err.Error())
+		util.SendError(w, util.GrpcToHttpStatus(err), err.Error())
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -9,10 +9,24 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
 	"github.com/townsag/reed/api_gateway/internal/config"
 )
 
+
+// TODO: at some point may want to factor authentication code out into its own package
+
+type PrincipalType string
+const (
+	UserType PrincipalType = "user"
+	GuestType PrincipalType = "guest"
+)
+
+// the differentiation between a user type claims and a guest type claims is implicit for now
+// one can tell that they have a user type token if the token has a UserName
+// this may not be the best way to do this but I will look into other approaches when I understand
+// the encoding json package a bit better
 type CustomClaims struct {
 	UserName string `json:"userName"`
 	jwt.RegisteredClaims
@@ -20,6 +34,19 @@ type CustomClaims struct {
     // struct to the custom claims struct. They can be accessed as if they were elements of 
     // the CustomClaims struct
 }
+
+func (c CustomClaims) ParsePrincipalId() (uuid.UUID, error) {
+	return uuid.Parse(c.Subject)
+}
+
+func (c CustomClaims) GetTokenType() PrincipalType {
+	if c.UserName != "" {
+		return UserType
+	}
+	return GuestType
+}
+
+var SubjectNotFoundError error = fmt.Errorf("Subject not found in JWT claims")
 
 // get a token
 func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +75,7 @@ func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// if the credentials are invalid, send a 401 error
 	if !isValid {
 		SendError(w, http.StatusUnauthorized, "the provided username and password did not match")
+		return
 	}
 	// if the credentials are valid, construct a token that includes the username and a generic scope
 	// us the golang-jwt library to make a token, maybe put this part in a package 
@@ -66,11 +94,12 @@ func (s *Service) PostAuthLogin(w http.ResponseWriter, r *http.Request) {
 	signedToken, err := token.SignedString([]byte(config.JWTSecretKey))
 	if err != nil {
 		SendError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	// return a 200 response with the validated token
 	SendJsonResponse(
 		w, http.StatusOK, &LoginResponse{
-			ExpiresIn: 1234,
+			ExpiresIn: 60 * 60,
 			Token: signedToken,
 		},
 	)

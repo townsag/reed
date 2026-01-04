@@ -25,6 +25,7 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 	// perform any application level request validation
 	if err := reqBody.Validate(); err != nil {
 		SendError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	// call the user microservice with the gRPC client
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
@@ -38,6 +39,7 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		SendError(w, GrpcToHttpStatus(err), err.Error())
+		return
 	}
 	// return the userId that is returned by the gRPC client
 	// only the UserId field of the create user reply struct is exported so we 
@@ -54,6 +56,7 @@ func (s *Service) DeleteUserUserId(w http.ResponseWriter, r *http.Request, userI
 	err := s.userServiceClient.DeactivateUser(ctx, userId)
 	if err != nil {
 		SendError(w, GrpcToHttpStatus(err), err.Error())
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -66,6 +69,7 @@ func (s *Service) GetUserUserId(w http.ResponseWriter, r *http.Request, userId U
 	serviceReply, err := s.userServiceClient.GetUser(ctx, userId)
 	if err != nil {
 		SendError(w, GrpcToHttpStatus(err), err.Error())
+		return
 	}
 	// ignore the returned user id, we don't have to parse it because it 
 	// will be the same as the calling user id 
@@ -86,6 +90,7 @@ func (s *Service) PutUserUserId(w http.ResponseWriter, r *http.Request, userId U
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
 		SendError(w, http.StatusBadRequest, fmt.Sprintf("error when decoding the request body: %s", err.Error()))
+		return
 	}
 	// now that we have successfully decoded the json body we need to call the user service 
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
@@ -93,6 +98,7 @@ func (s *Service) PutUserUserId(w http.ResponseWriter, r *http.Request, userId U
 	err = s.userServiceClient.ChangeUserPassword(ctx, userId, reqBody.OldPassword, reqBody.NewPassword)
 	if err != nil {
 		SendError(w, GrpcToHttpStatus(err), err.Error())
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

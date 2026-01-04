@@ -4,4 +4,4 @@ note_ui/
 *.env
 user_service/go-stdlib-common-interfaces.md
 
-syntax.go
+temp/

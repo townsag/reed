@@ -69,7 +69,7 @@ paths:
     get:
       tags:
         - Documents
-      summary: get all the documents that a given user has owner permissions on
+      summary: get all the documents that a given user has the given permission on
       parameters:
         - in: query
           name: cursor
@@ -83,6 +83,12 @@ paths:
             type: string
           required: false
           description: the number of documents to retrieve in a page
+        - in: query
+          name: permissionLevel
+          required: false
+          schema:
+            $ref: "#/components/schemas/PermissionLevel"
+            default: owner
       responses:
         '200':
           description: OK

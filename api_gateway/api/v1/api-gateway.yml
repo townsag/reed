@@ -57,8 +57,8 @@ paths:
               required:
                 - userId
       responses:
-        '201':
-          $ref: "#/components/responses/GetDocumentResponse"
+        '200':
+          $ref: "#/components/responses/PostDocumentResponse"
         '400':
           $ref: "#/components/responses/BadRequest"
         '401':
@@ -80,7 +80,8 @@ paths:
         - in: query
           name: limit
           schema:
-            type: string
+            type: integer
+            format: int32
           required: false
           description: the number of documents to retrieve in a page
         - in: query
@@ -91,20 +92,7 @@ paths:
             default: owner
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  documents:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Document"
-                  cursor:
-                    type: string
-                required:
-                  - documents
+          $ref: "#/components/responses/GetDocumentResponse"
         '400':
           $ref: "#/components/responses/BadRequest"
         '401':
@@ -479,8 +467,6 @@ components:
           $ref: "#/components/schemas/LastModifiedAt"
       required:
         - documentId
-        - documentName
-        - documentDescription
         - createdAt
         - lastModifiedAt
 
@@ -620,6 +606,18 @@ components:
                 type: string
             required:
               - documents
+    PostDocumentResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              documentId:
+                type: string
+                format: uuid
+            required:
+              - documentId
     BadRequest:
       description: Bad Request
       content:

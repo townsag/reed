@@ -26,3 +26,13 @@
     - this way we can use the trace viewer to find all the traces with a userId attribute and then look at logs with those trace ids instead of looking for all the logs with a user id
     - fundamentally: Tempo is the entrypoint for observability, see logging as a secondary source of observability data
         - it is not important that logs are easily queryable if Tempo is easily queryable and the logs can easily be reached from tempo
+
+- fine grain permissions:
+    - sets of resources have authorization rules, like someone with an anonymous token cannot 
+      create any documents, this is a course grain authorization rule
+    - specific resources have permissions, like someone with an anonymous token might have editor
+      privileges on some resources but not on other resources
+    - the api gateway layer should be in charge of coarse grain authorization like which types
+      of routes a token is able to call
+    - the service / backend layer behind the gateway should be in charge of fine grain permissions
+      like which tokens can access which specific resources

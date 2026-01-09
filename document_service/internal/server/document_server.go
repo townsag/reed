@@ -384,9 +384,11 @@ func (s *DocumentServiceServerImpl) DeleteDocuments(
 		parsedDocumentIds[i] = parsedId
 	}
 	// parse the user id
-	parsedUserId, err := uuid.Parse(deleteDocsReq.UserId)
+	parsedUserId, err := uuid.Parse(deleteDocsReq.ClientContext.PrincipalId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user id: %s", deleteDocsReq.UserId)
+		return nil, status.Errorf(
+			codes.InvalidArgument, "failed to parse user id: %s", deleteDocsReq.ClientContext.PrincipalId,
+		)
 	}
 	// validate that the user has ownership permissions over each of the documents in the list 
 	// call the delete documents service method
@@ -554,9 +556,11 @@ func (s *DocumentServiceServerImpl) CreateGuest(
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse document id as uuid: %v", req.DocumentId)
 	}
 	// parse the userId
-	userId, err := uuid.Parse(req.UserId)
+	userId, err := uuid.Parse(req.ClientContext.PrincipalId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse user Id as uuid: %v", req.UserId)
+		return nil, status.Errorf(
+			codes.InvalidArgument, "failed to parse user Id as uuid: %v", req.ClientContext.PrincipalId,
+		)
 	}
 	// parse the permission level
 	permissionLevel, err := pbToServicePermissionLevel(req.PermissionLevel)

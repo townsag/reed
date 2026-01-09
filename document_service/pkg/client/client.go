@@ -54,18 +54,31 @@ func (c *DocumentServiceClient) CreateDocument(
 			OwnerUserId: ownerUserId.String(),
 			DocumentName: documentName,
 			DocumentDescription: documentDescription,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: ownerUserId.String(),
+			},
 		},
 	)
 }
 
+/*
+checkpoint:
+- you were updating the document service proto and client to reflect the pattern of 
+  propagating client context that has been parsed from the clients JWT claims 
+  as a structured grpc message
+*/
 func (c *DocumentServiceClient) GetDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
+	principalId uuid.UUID,
 ) (*pb.GetDocumentReply, error) {
 	return c.client.GetDocument(
 		ctx,
 		&pb.GetDocumentRequest{
 			DocumentId: documentId.String(),
+			ClientContext: &pb.ClientContext{
+				PrincipalId: principalId.String(),
+			},
 		},
 	)
 }
@@ -73,7 +86,7 @@ func (c *DocumentServiceClient) GetDocument(
 func (c *DocumentServiceClient) UpdateDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
-	userId uuid.UUID,
+	principalId uuid.UUID,
 	name *string,
 	description *string,
 ) error {
@@ -81,9 +94,11 @@ func (c *DocumentServiceClient) UpdateDocument(
 		ctx,
 		&pb.UpdateDocumentRequest{
 			DocumentId: documentId.String(),
-			UserId: userId.String(),
 			Name: name,
 			Description: description,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: principalId.String(),
+			},
 		},
 	)
 	return err
@@ -98,7 +113,10 @@ func (c *DocumentServiceClient) DeleteDocument(
 		ctx,
 		&pb.DeleteDocumentRequest{
 			DocumentId: documentId.String(),
-			UserId: userId.String(),
+			ClientContext: &pb.ClientContext{
+				PrincipalId: userId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 	return err
@@ -113,7 +131,10 @@ func (c *DocumentServiceClient) DeleteDocuments(
 		ctx,
 		&pb.DeleteDocumentsRequest{
 			DocumentIds: documentIds.Strings(),
-			UserId: userId.String(),
+			ClientContext: &pb.ClientContext{
+				PrincipalId: userId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 	return err
@@ -121,7 +142,8 @@ func (c *DocumentServiceClient) DeleteDocuments(
 
 func (c *DocumentServiceClient) ListDocumentsByPrincipal(
 	ctx context.Context,
-	principalId uuid.UUID,
+	targetPrincipalId uuid.UUID,
+	callingPrincipalId uuid.UUID,
 	permissionFilter []pb.PermissionLevel,
 	cursor *pb.Cursor,
 	pageSize *int32,
@@ -129,10 +151,13 @@ func (c *DocumentServiceClient) ListDocumentsByPrincipal(
 	return c.client.ListDocumentsByPrincipal(
 		ctx,
 		&pb.ListDocumentByPrincipalRequest{
-			PrincipalId: principalId.String(),
+			PrincipalId: targetPrincipalId.String(),
 			PermissionsFilter: permissionFilter,
 			Cursor: cursor,
 			PageSize: pageSize,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: callingPrincipalId.String(),
+			},
 		},
 	)
 }
@@ -158,6 +183,7 @@ server side, therefore it is a valid input to this function
 func (c *DocumentServiceClient) ListPermissionsOnDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
+	principalId uuid.UUID,
 	permissionFilter []pb.PermissionLevel,
 	cursor *pb.Cursor,
 	pageSize *int32,
@@ -169,6 +195,9 @@ func (c *DocumentServiceClient) ListPermissionsOnDocument(
 			PermissionsFilter: permissionFilter,
 			Cursor: cursor,
 			PageSize: pageSize,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: principalId.String(),
+			},
 		},
 	)
 }
@@ -183,24 +212,32 @@ func (c *DocumentServiceClient) CreateGuest(
 		ctx,
 		&pb.CreateGuestRequest{
 			DocumentId: documentId.String(),
-			UserId: userId.String(),
 			PermissionLevel: permissionLevel,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: userId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 }
 
 func (c *DocumentServiceClient) UpsertPermissionUser(
 	ctx context.Context,
-	userId uuid.UUID,
+	targetUserId uuid.UUID,
+	callingUserId uuid.UUID,
 	documentId uuid.UUID,
 	permissionLevel pb.PermissionLevel,
 ) error {
 	_, err := c.client.UpsertPermissionUser(
 		ctx,
 		&pb.UpsertPermissionUserRequest{
-			UserId: userId.String(),
+			UserId: targetUserId.String(),
 			DocumentId: documentId.String(),
 			PermissionLevel: permissionLevel,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: callingUserId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 	return err
@@ -209,6 +246,7 @@ func (c *DocumentServiceClient) UpsertPermissionUser(
 func (c *DocumentServiceClient) UpdatePermissionGuest(
 	ctx context.Context,
 	guestId uuid.UUID,
+	callingUserId uuid.UUID,
 	permissionLevel pb.PermissionLevel,
 ) error {
 	_, err := c.client.UpdatePermissionGuest(
@@ -216,6 +254,10 @@ func (c *DocumentServiceClient) UpdatePermissionGuest(
 		&pb.UpdatePermissionGuestRequest{
 			GuestId: guestId.String(),
 			PermissionLevel: permissionLevel,
+			ClientContext: &pb.ClientContext{
+				PrincipalId: callingUserId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 	return err
@@ -225,12 +267,17 @@ func (c *DocumentServiceClient) DeletePermissionsPrincipal(
 	ctx context.Context,
 	principalId uuid.UUID,
 	documentId uuid.UUID,
+	callingUserId uuid.UUID,
 ) error {
 	_, err := c.client.DeletePermissionsPrincipal(
 		ctx,
 		&pb.DeletePermissionsPrincipalRequest{
 			PrincipalId: principalId.String(),
 			DocumentId: documentId.String(),
+			ClientContext: &pb.ClientContext{
+				PrincipalId: callingUserId.String(),
+				PrincipalType: pb.Principal_USER.Enum(),
+			},
 		},
 	)
 	return err

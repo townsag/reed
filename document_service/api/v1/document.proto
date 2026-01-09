@@ -70,10 +70,16 @@ message Permission {
     google.protobuf.Timestamp last_modified_at = 6;
 }
 
+message ClientContext {
+    string principal_id = 1;
+    optional Principal.PrincipalType principal_type = 2;
+}
+
 message CreateDocumentRequest {
     string owner_user_id = 1;
     optional string document_name = 2;
     optional string document_description = 3;
+    ClientContext client_context = 4;
 }
 
 message CreateDocumentReply {
@@ -82,6 +88,7 @@ message CreateDocumentReply {
 
 message GetDocumentRequest {
     string document_id = 1;
+    ClientContext client_context = 3;
 }
 
 message GetDocumentReply {
@@ -90,21 +97,21 @@ message GetDocumentReply {
 
 message UpdateDocumentRequest {
     string document_id = 1;
-    string user_id = 2;
-    optional string name = 3;
-    optional string description = 4;
+    optional string name = 2;
+    optional string description = 3;
+    ClientContext client_context = 4;
 }
 
 message DeleteDocumentRequest {
     string document_id = 1;
-    string user_id = 2;
+    ClientContext client_context = 2;
 }
 
 // this should probably be reimplemented as a batch deletion endpoint with a
 // job id that can be queried for status
 message DeleteDocumentsRequest {
     repeated string document_ids = 1;
-    string user_id = 2;
+    ClientContext client_context = 2;
 }
 
 message ListDocumentByPrincipalRequest {
@@ -115,6 +122,10 @@ message ListDocumentByPrincipalRequest {
     optional Cursor cursor = 3;
     // ^the cursor encapsulated sorting information and offset information
     optional int32 page_size = 4;
+    ClientContext client_context = 5;
+    // use a client context and a principal id
+    // it could be that a user can list the permissions of another user
+    // (maybe just documents that the calling user is an owner of)
 }
 
 // this leads me to believe that streaming responses are not the best approach for
@@ -133,6 +144,7 @@ message ListDocumentsByPrincipalReply {
 message GetPermissionsRequest {
     string document_id = 1;
     string principal_id = 2;
+    ClientContext client_context = 3;
 }
 
 message GetPermissionsReply {
@@ -144,6 +156,7 @@ message ListPermissionsOnDocumentRequest {
     repeated PermissionLevel permissions_filter = 2;
     optional Cursor cursor = 3;
     optional int32 page_size = 4;
+    ClientContext client_context = 5;
 }
 
 message ListPermissionsOnDocumentReply {
@@ -153,9 +166,8 @@ message ListPermissionsOnDocumentReply {
 
 message CreateGuestRequest {
     string document_id = 1;
-    string user_id = 2;
-    // ^user that created the Guest
-    PermissionLevel permission_level = 3;
+    PermissionLevel permission_level = 2;
+    ClientContext client_context = 3;
 }
 
 message CreateGuestReply {
@@ -168,6 +180,9 @@ message UpsertPermissionUserRequest {
     string user_id = 1;
     string document_id = 2;
     PermissionLevel permission_level = 3;
+    ClientContext client_context = 4;
+    // the first user id describes the user whose permissions are being modified 
+    // the calling context describes the user who is modifying the permissions 
 }
 
 message UpdatePermissionGuestRequest {
@@ -177,9 +192,11 @@ message UpdatePermissionGuestRequest {
     // id in the database. Taking a document id here gives the impression to the 
     // calling code that they can associate the guest with arbitrary documents
     PermissionLevel permission_level = 3;
+    ClientContext client_context = 4;
 }
 
 message DeletePermissionsPrincipalRequest {
     string principal_id = 1;
     string document_id = 2;
+    ClientContext client_context = 3;
 }

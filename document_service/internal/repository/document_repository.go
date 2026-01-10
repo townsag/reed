@@ -355,6 +355,8 @@ func (dr *DocumentRepository) DeleteDocuments(
 	documentIds uuid.UUIDs,
 	userId uuid.UUID,
 ) (err error) {
+	// TODO: refactor this to verify that the given user has permission to delete this document
+	// also the given user must be a user and not a guest
 	if len(documentIds) < 1 {
 		return service.InvalidInput("expected at least one documentId", nil)
 	}

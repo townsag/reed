@@ -36,7 +36,11 @@ type CustomClaims struct {
 }
 
 func (c CustomClaims) ParsePrincipalId() (uuid.UUID, error) {
-	return uuid.Parse(c.Subject)
+	parsedId, err := uuid.Parse(c.Subject)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to parse the principal id from the JWT claims with error: %w", err)
+	}
+	return parsedId, nil
 }
 
 func (c CustomClaims) GetTokenType() PrincipalType {

@@ -374,9 +374,3 @@ func (s *Service) PutDocumentDocumentId(w http.ResponseWriter, r *http.Request, 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-/*
-CHECKPOINT:
-	- code cleanup:
-		- reduce the code duplication in the way that error response messages are defined
-*/

@@ -61,12 +61,6 @@ func (c *DocumentServiceClient) CreateDocument(
 	)
 }
 
-/*
-checkpoint:
-- you were updating the document service proto and client to reflect the pattern of 
-  propagating client context that has been parsed from the clients JWT claims 
-  as a structured grpc message
-*/
 func (c *DocumentServiceClient) GetDocument(
 	ctx context.Context,
 	documentId uuid.UUID,

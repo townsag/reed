@@ -49,6 +49,9 @@ func (s *Service) PostUser(w http.ResponseWriter, r *http.Request) {
 
 // deactivate a user
 func (s *Service) DeleteUserUserId(w http.ResponseWriter, r *http.Request, userId UserId) {
+	// TODO: this request should probably have some authorization on it, which users should
+	//		 be allowed to delete a user?
+	// maybe this should be an admin only route
 	// there is no request body to validate
 	// call the user microservice to deactivate this user
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
@@ -63,6 +66,8 @@ func (s *Service) DeleteUserUserId(w http.ResponseWriter, r *http.Request, userI
 
 // get a user
 func (s *Service) GetUserUserId(w http.ResponseWriter, r *http.Request, userId UserId) {
+	// this should have some authorization? should users be able to get another 
+	// users email etc.
 	// call the user microservice to get this user
 	ctx, cancel := context.WithTimeout(r.Context(), config.TIMEOUT_MILLISECONDS)
 	defer cancel()

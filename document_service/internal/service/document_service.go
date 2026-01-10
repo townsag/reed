@@ -128,6 +128,8 @@ func (ds *DocumentService) CreateDocument(
 	documentName *string,
 	documentDescription *string,
 ) (uuid.UUID, error) {
+	// we may need some permission logic here if we want to enforce quotas on documents that a user
+	// can create
 	// this is an internal api that will be called by the api gateway layer. We can expect that
 	// the owner userId is a valid Id without checking with the user service
 	documentId, err := ds.documentRepo.CreateDocument(ctx, ownerUserId, documentName, documentDescription)
@@ -146,6 +148,8 @@ func (ds *DocumentService) GetDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
 ) (*Document, error) {
+	// TODO: add some permission logic here so that we can be sure the user has permission
+	// 		 to get this document
 	document, err := ds.documentRepo.GetDocument(ctx, documentId)
 	if err != nil {
 		// this is a runtime type assertion
@@ -166,6 +170,8 @@ func (ds *DocumentService) UpdateDocument(
 	documentName *string,
 	documentDescription *string,
 ) (err error) {
+	// TODO: add some permission logic here so that we can be sure that the user has
+	// 		 permission to update this document
 	if documentName == nil && documentDescription == nil {
 		return InvalidInput("at least one of documentName or documentDescription must be provided to update document", nil)
 	}
@@ -182,6 +188,8 @@ func (ds *DocumentService) DeleteDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
 ) (err error) {
+	// TODO: add some permission logic here so that we can be sure that the user has
+	//		 permissions to delete this document 
 	err = ds.documentRepo.DeleteDocument(ctx, documentId)
 	if err != nil {
 		if _, ok := err.(DomainError); !ok {
@@ -196,6 +204,8 @@ func (ds *DocumentService) DeleteDocuments(
 	documentIds uuid.UUIDs,
 	userId uuid.UUID,
 ) (err error) {
+	// TODO: add some permission logic here so that we can be sure that the user has 
+	// permission to delete these documents 
 	err = ds.documentRepo.DeleteDocuments(ctx, documentIds, userId)
 	if err != nil{
 		if _, ok := err.(DomainError); !ok {
@@ -266,6 +276,8 @@ func (ds *DocumentService) ListPermissionsOnDocument(
 	cursor *Cursor,
 	pageSize int32,
 ) (recipientPermissions []Permission, cursorResp *Cursor, err error) {
+	// TODO: add some permissions logic here. We don't want principals with view permission to be
+	//		 able to see the other principals that have other permissions on the document 
 	// if the list of permissions is empty, replace it with the permissive list of permissions
 	if len(permissions) < 1 {
 		permissions = AllPermissions
@@ -297,6 +309,8 @@ func (ds *DocumentService) CreateGuest(
 	documentId uuid.UUID,
 	permissionLevel PermissionLevel,
 ) (guestId uuid.UUID, err error) {
+	// TODO: add some permission logic here, we want to verify that the creator Id 
+	//		 has owner permissions on the document and is a userId
 	// verify that the permission level is one of the valid permission levels for a guest
 	if permissionLevel == Owner {
 		return uuid.Nil, InvalidInput(
@@ -325,6 +339,8 @@ func (ds *DocumentService) UpsertPermissionUser(
 	documentId uuid.UUID,
 	permissionLevel PermissionLevel,
 ) (err error) {
+	// TODO: add some permission logic here, we want to verify that the calling userId has the 
+	//		 owner level permissions on that document so that it can update other users permissions
 	// validate the permission level
 	if permissionLevel == Owner {
 		return InvalidInput("cannot grant owner permission to user other than by creating a document with that user", nil)
@@ -347,6 +363,8 @@ func (ds *DocumentService) UpdatePermissionGuest(
 	guestId uuid.UUID,
 	permissionLevel PermissionLevel,
 ) (err error) {
+	// TODO: add some permission logic here, we want to verify that the calling userId has the 
+	//		 correct permissions to update the permissions of guests on a document
 	// validate the permission level
 	if permissionLevel == Owner {
 		return InvalidInput("cannot grant owner permission to a guest", nil)
@@ -369,6 +387,9 @@ func (ds *DocumentService) DeletePermissionPrincipal(
 	recipientId uuid.UUID,
 	documentId uuid.UUID,
 ) (err error) {
+	// TODO: add some permission logic here, we want to make sure that the calling userId
+	// 		 has the owner permission on the document so that they can delete other principals
+	//		 permissions
 	err = ds.documentRepo.DeletePermissionsPrincipal(
 		ctx, recipientId, documentId,
 	)

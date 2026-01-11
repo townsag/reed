@@ -211,6 +211,15 @@ paths:
             type: string
           required: false
           description: the number of documents to retrieve in a page
+        - in: query
+          name: permissionFilter
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/PermissionLevel"
+          style: form
+          explode: true
+          description: specify how the retrieved users can be filtered by permission level
       responses:
         '201':
           description: OK

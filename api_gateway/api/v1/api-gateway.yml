@@ -13,6 +13,7 @@ paths:
         - Auth
       summary: get a token 
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -42,6 +43,7 @@ paths:
         - Documents
       summary: create a new document for a user
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -219,6 +221,7 @@ paths:
             items:
               $ref: "#/components/schemas/PermissionLevel"
           style: form
+          required: false
           explode: true
           description: specify how the retrieved users can be filtered by permission level
       responses:
@@ -382,6 +385,7 @@ paths:
         - Users
       summary: update a user including the users password
       requestBody:
+        required: true
         content:
           application/json:
             schema:

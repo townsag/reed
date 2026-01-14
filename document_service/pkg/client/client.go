@@ -159,13 +159,17 @@ func (c *DocumentServiceClient) ListDocumentsByPrincipal(
 func (c *DocumentServiceClient) GetPermissionsOfPrincipalOnDocument(
 	ctx context.Context,
 	documentId uuid.UUID,
-	principalId uuid.UUID,
+	targetPrincipalId uuid.UUID,
+	callingPrincipalId uuid.UUID,
 ) (*pb.GetPermissionsReply, error) {
 	return c.client.GetPermissionsOfPrincipalOnDocument(
 		ctx,
 		&pb.GetPermissionsRequest{
 			DocumentId: documentId.String(),
-			PrincipalId: principalId.String(),
+			PrincipalId: targetPrincipalId.String(),
+			ClientContext: &pb.ClientContext{
+				PrincipalId: callingPrincipalId.String(),
+			},
 		},
 	)
 }

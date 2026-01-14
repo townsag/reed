@@ -7,23 +7,29 @@ import (
 	"github.com/townsag/reed/api_gateway/internal/server"
 	"github.com/townsag/reed/api_gateway/internal/config"
 
-	"github.com/townsag/reed/user_service/pkg/client"
+	usClient "github.com/townsag/reed/user_service/pkg/client"
+	dsClient "github.com/townsag/reed/document_service/pkg/client"
 )
 
 
 func main() {
 	// create a client that can be used to access the user service
-	userServiceClient, err := client.NewUserServiceClient(config.UserServiceAddr)
+	userServiceClient, err := usClient.NewUserServiceClient(config.UserServiceAddr)
 	if err != nil {
 		log.Fatalf("failed to create a user service client with error: %s", err.Error())
 	}
+	// create a client that can be used to access the document service
+	documentServiceClient, err := dsClient.NewDocumentServiceClient(config.DocumentServiceAddr)
+	if err != nil {
+		log.Fatalf("failed to create a document service client with error: %s", err.Error())
+	}
 	// create an instance of the struct which implements the server.ServerInterface
-	service := server.NewService(userServiceClient)
+	service := server.NewService(userServiceClient, documentServiceClient)
 	// create a request validation middleware
 	validationMiddleware := server.RequestValidationMiddleware()
 	// create an instance of the handler 
 	h := server.HandlerWithOptions(
-		service, server.StdHTTPServerOptions{
+		&service, server.StdHTTPServerOptions{
 			BaseURL: "todo",
 			Middlewares: []server.MiddlewareFunc{
 				server.AuthMiddleware,

@@ -13,6 +13,7 @@ paths:
         - Auth
       summary: get a token 
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -42,6 +43,7 @@ paths:
         - Documents
       summary: create a new document for a user
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -208,25 +210,23 @@ paths:
         - in: query
           name: limit
           schema:
-            type: string
+            type: integer
+            format: int32
           required: false
           description: the number of documents to retrieve in a page
+        - in: query
+          name: permissionFilter
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/PermissionLevel"
+          style: form
+          required: false
+          explode: true
+          description: specify how the retrieved users can be filtered by permission level
       responses:
         '201':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  permissions:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Permission"
-                  cursor:
-                    type: string
-                required:
-                  - permissions
+          $ref: "#/components/responses/ListPermissionsOnDocumentResponse"
         '400':
           $ref: "#/components/responses/BadRequest"
         '401':
@@ -238,7 +238,7 @@ paths:
         - Permissions
       summary: create a permission on a document either by sharing the document with an existing user or creating a new guest user for that document
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
@@ -247,23 +247,13 @@ paths:
                 userIdToShare:
                   type: string
                   format: uuid
+                permissionLevel:
+                  $ref: "#/components/schemas/PermissionLevel"
               required:
-                - userIdToShare
+                - permissionLevel
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                minProperties: 1
-                properties:
-                  guestId:
-                    type: string
-                    format: uuid
-                  userIdSharedWith:
-                    type: string
-                    format: uuid
+          $ref: "#/components/responses/ShareDocumentResponse"
         '400':
           $ref: "#/components/responses/BadRequest"
         '401':
@@ -280,11 +270,7 @@ paths:
       summary: get the permission of a principal on a document
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Permission"
+          $ref: "#/components/responses/GetPermissionOfPrincipalResponse"
         '400':
           $ref: "#/components/responses/BadRequest"
         '401':
@@ -304,8 +290,11 @@ paths:
               properties:
                 permissionLevel:
                   $ref: "#/components/schemas/PermissionLevel"
+                principalType:
+                  $ref: "#/components/schemas/PrincipalType"
               required:
                 - permissionLevel
+                - principalType
       responses:
         '204':
           description: OK
@@ -396,6 +385,7 @@ paths:
         - Users
       summary: update a user including the users password
       requestBody:
+        required: true
         content:
           application/json:
             schema:
@@ -469,6 +459,12 @@ components:
         - documentId
         - createdAt
         - lastModifiedAt
+    
+    PrincipalType:
+      type: string
+      enum:
+        - user
+        - guest
 
     Principal:
       type: object
@@ -477,10 +473,7 @@ components:
           type: string
           format: uuid
         principalType:
-          type: string
-          enum:
-            - user
-            - guest
+          $ref: "#/components/schemas/PrincipalType"
       required:
         - principalId
         - principalType
@@ -618,6 +611,42 @@ components:
                 format: uuid
             required:
               - documentId
+    ListPermissionsOnDocumentResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              permissions:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Permission"
+                x-go-type: "[]*Permission"
+              cursor:
+                type: string
+            required:
+              - permissions
+    ShareDocumentResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            minProperties: 1
+            properties:
+              guestId:
+                type: string
+                format: uuid
+              userIdSharedWith:
+                type: string
+                format: uuid
+    GetPermissionOfPrincipalResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Permission"
     BadRequest:
       description: Bad Request
       content:

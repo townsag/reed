@@ -32,7 +32,7 @@ Notes:
 	  request then we know to pick up where they left off
 */
 
-func serverToClientPermissionLevel(permissionLevel PermissionLevel) (pb.PermissionLevel, error) {
+func netToProtoPermissionLevel(permissionLevel PermissionLevel) (pb.PermissionLevel, error) {
 	switch permissionLevel {
 	case Owner:
 		return pb.PermissionLevel_PERMISSION_OWNER, nil
@@ -44,12 +44,24 @@ func serverToClientPermissionLevel(permissionLevel PermissionLevel) (pb.Permissi
 	return -1, fmt.Errorf("failed to map the permission level to a valid proto type")
 }
 
-func serverToClientCursor(cursor string) (*pb.Cursor, error) {
+func netToProtoPermissionFilter(permissionFilter []PermissionLevel) ([]pb.PermissionLevel, error) {
+	parsedPermissionFilter := make([]pb.PermissionLevel, 0)
+	for _, elem := range permissionFilter {
+		parsedPL, err := netToProtoPermissionLevel(elem)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse permission level with error: %w", err)
+		}
+		parsedPermissionFilter = append(parsedPermissionFilter, parsedPL)
+	}
+	return parsedPermissionFilter, nil
+}
+
+func netToProtoCursor(cursor string) (*pb.Cursor, error) {
 	// decode the url safe base64 cursor back to the protobuf wire format
 	wire, err := base64.URLEncoding.DecodeString(cursor)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failed to decode the base64 cursor representation ",
+			"failed to decode the base64 cursor representation " +
 			"to proto wire format with error: %w", err,
 		)
 	}
@@ -64,12 +76,28 @@ func serverToClientCursor(cursor string) (*pb.Cursor, error) {
 	return &pbCursor, nil
 }
 
-func clientToServerCursor(cursor *pb.Cursor) (string, error) {
+func protoToNetPermissionLevel(permissionLevel pb.PermissionLevel) (PermissionLevel, error) {
+	switch permissionLevel {
+	case pb.PermissionLevel_PERMISSION_OWNER:
+		return Owner, nil
+	case pb.PermissionLevel_PERMISSION_EDITOR:
+		return Editor, nil
+	case pb.PermissionLevel_PERMISSION_VIEWER:
+		return Viewer, nil
+	default:
+		return "", fmt.Errorf(
+			"failed to map the permission level: %v to a valid net permission type",
+			permissionLevel,
+		)
+	}
+}
+
+func protoToNetCursor(cursor *pb.Cursor) (string, error) {
 	// serialize the struct to the protobuf wire format
 	wire, err := proto.Marshal(cursor)
 	if err != nil {
 		return "", fmt.Errorf(
-			"failed to serialize the protobuf cursor to the",
+			"failed to serialize the protobuf cursor to the" +
 			" wire format with error: %w", err,
 		)
 	}
@@ -78,7 +106,7 @@ func clientToServerCursor(cursor *pb.Cursor) (string, error) {
 	return cursorString, nil
 }
 
-func clientToServerDocument(document *pb.Document) (*Document, error) {
+func protoToNetDocument(document *pb.Document) (*Document, error) {
 	// parse the document id
 	documentId, err := uuid.Parse(document.DocumentId)
 	if err != nil {
@@ -95,7 +123,90 @@ func clientToServerDocument(document *pb.Document) (*Document, error) {
 	}, nil
 }
 
-// func clientToServerDocuments()
+func protoToNetPrincipalType(principalType pb.Principal_PrincipalType) (PrincipalType, error) {
+	switch principalType {
+	case pb.Principal_USER:
+		return PrincipalTypeUser, nil
+	case pb.Principal_GUEST:
+		return PrincipalTypeGuest, nil
+	default:
+		return "", fmt.Errorf(
+			"failed to map the proto principal type to a net principal type: %v",
+			principalType,
+		)
+	}
+}
+
+func protoToNetPrincipal(principal *pb.Principal) (*Principal, error) {
+	// parse the principal id
+	principalId, err := uuid.Parse(principal.PrincipalId)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to parse principalId: %s with error: %w",
+			principal.PrincipalId, err,
+		)
+	}
+	// parse the principal type
+	principalType, err := protoToNetPrincipalType(principal.PrincipalType)
+	if err != nil {
+		return nil, err
+	}
+	return &Principal{
+		PrincipalId: principalId,
+		PrincipalType: principalType,
+	}, nil
+}
+
+// func protoToNetDocuments()
+
+func protoToNetPermission(permission *pb.Permission) (*Permission, error) {
+	// parse the principalId of the user that created this permission for the created by field
+	createdBy, err := uuid.Parse(permission.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to parse the created by field of the permission: %s" +
+			" with error: %w", createdBy, err,
+		)
+	}
+	// parse the documentId of the returned permission
+	documentId, err := uuid.Parse(permission.DocumentId)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to parse the document if of the permission: %s " +
+			"with error: %w", documentId, err,
+		)
+	}
+	// parse the permission level of the returned permission
+	permissionLevel, err := protoToNetPermissionLevel(permission.PermissionLevel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse permission: %w", err)
+	}
+	// parse the principal from the proto response 
+	principal, err :=  protoToNetPrincipal(permission.Recipient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse permission: %w", err)
+	}
+	return &Permission{
+		CreatedAt: permission.CreatedAt.Seconds,
+		CreatedBy: createdBy,
+		DocumentId: documentId,
+		LastModifiedAt: permission.LastModifiedAt.Seconds,
+		PermissionLevel: permissionLevel,
+		Principal: *principal,
+	}, nil
+}
+
+func protoToNetPermissions(permissions []*pb.Permission) ([]*Permission, error) {
+	result := make([]*Permission, len(permissions))
+	for i, permission := range permissions {
+		temp, err := protoToNetPermission(permission)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse array of permissions: %w", err)
+		}
+		result[i] = temp
+	}
+	return result, nil
+}
 
 // batch delete endpoint for deleting lists of documents
 // (DELETE /document)
@@ -125,7 +236,7 @@ func (s *Service) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	// coarse grain authorization check: only users should be able to delete document
 	// check if the token is not user type, if so, return an error
 	principalType := claims.GetTokenType()
-	if principalType != UserType {
+	if principalType != PrincipalTypeUser {
 		SendError(w, http.StatusForbidden,
 			fmt.Sprintf("Only user type tokens can delete documents, received token with type: %s", principalType),
 		)
@@ -161,7 +272,7 @@ func (s *Service) GetDocument(w http.ResponseWriter, r *http.Request, params Get
 	// service client
 	var cursor *pb.Cursor = nil
 	if params.Cursor != nil {
-		cursor, err = serverToClientCursor(*params.Cursor)
+		cursor, err = netToProtoCursor(*params.Cursor)
 		if err != nil {
 			SendError(w, http.StatusBadRequest, "failed to parse the provided cursor")
 			return
@@ -173,7 +284,7 @@ func (s *Service) GetDocument(w http.ResponseWriter, r *http.Request, params Get
 	if params.PermissionLevel == nil {
 		permissionLevel = pb.PermissionLevel_PERMISSION_OWNER
 	} else {
-		parsedPermissionLevel, err := serverToClientPermissionLevel(*params.PermissionLevel)
+		parsedPermissionLevel, err := netToProtoPermissionLevel(*params.PermissionLevel)
 		if err != nil {
 			SendError(w, http.StatusBadRequest, err.Error())
 			return
@@ -198,7 +309,7 @@ func (s *Service) GetDocument(w http.ResponseWriter, r *http.Request, params Get
 	}
 	// format the document service response into the http response
 	// format a cursor for the documents response 
-	respCursor, err := clientToServerCursor(reply.Cursor)
+	respCursor, err := protoToNetCursor(reply.Cursor)
 	if err != nil {
 		SendError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -206,7 +317,7 @@ func (s *Service) GetDocument(w http.ResponseWriter, r *http.Request, params Get
 	// format a list of documents from the document permissions structs in the responses
 	var documents []Document = make([]Document, len(reply.DocumentPermissions))
 	for i, documentPermission := range reply.DocumentPermissions {
-		document, err := clientToServerDocument(documentPermission.Document)
+		document, err := protoToNetDocument(documentPermission.Document)
 		if err != nil {
 			SendError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -223,15 +334,6 @@ func (s *Service) GetDocument(w http.ResponseWriter, r *http.Request, params Get
 // create a new document for a user
 // (POST /document)
 func (s *Service) PostDocument(w http.ResponseWriter, r *http.Request) {
-	// parse the request body
-	var request PostDocumentJSONRequestBody
-	err := json.NewDecoder(r.Body).Decode(&request)
-	if err != nil {
-		SendError(w, http.StatusBadRequest, fmt.Sprintf(
-			"failed to parse the request body with error: %v", err.Error(),
-		))
-		return
-	}
 	// read the jwt claims from the request context
 	claims, err := GetClaims(r.Context())
 	if err != nil {
@@ -243,7 +345,7 @@ func (s *Service) PostDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// validate that the token is a user type token, guests should not be able to
 	// create documents 
-	if claims.GetTokenType() != UserType {
+	if claims.GetTokenType() != PrincipalTypeUser {
 		SendError(w, http.StatusForbidden, "must have a user type token to make documents")
 		return
 	}
@@ -251,6 +353,15 @@ func (s *Service) PostDocument(w http.ResponseWriter, r *http.Request) {
 	userId, err := claims.ParsePrincipalId()
 	if err != nil {
 		SendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// parse the request body
+	var request PostDocumentJSONRequestBody
+	err = json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		SendError(w, http.StatusBadRequest, fmt.Sprintf(
+			"failed to parse the request body with error: %v", err.Error(),
+		))
 		return
 	}
 	// call the document service with the document information parsed from
@@ -296,7 +407,7 @@ func (s *Service) DeleteDocumentDocumentId(w http.ResponseWriter, r *http.Reques
 	}
 	// coarse grain authorization, check if the type of the token is user type 
 	// if not, return an error 
-	if claims.GetTokenType() != UserType {
+	if claims.GetTokenType() != PrincipalTypeUser {
 		SendError(w, http.StatusForbidden, "must have a user type token to delete documents")
 		return
 	}
@@ -333,7 +444,7 @@ func (s *Service) GetDocumentDocumentId(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	// format the document service response such that it can be sent as an http response body
-	document, err := clientToServerDocument(result.Document)
+	document, err := protoToNetDocument(result.Document)
 	if err != nil {
 		SendError(
 			w, http.StatusInternalServerError,
@@ -347,12 +458,6 @@ func (s *Service) GetDocumentDocumentId(w http.ResponseWriter, r *http.Request, 
 // update one document
 // (PUT /document/{documentId})
 func (s *Service) PutDocumentDocumentId(w http.ResponseWriter, r *http.Request, documentId DocumentId) {
-	// parse the request body
-	var body PutDocumentDocumentIdJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		SendError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	// parse the claims from the JWT in the request Authorization header
 	claims, err := GetClaims(r.Context())
 	if err != nil {
@@ -362,6 +467,12 @@ func (s *Service) PutDocumentDocumentId(w http.ResponseWriter, r *http.Request, 
 	principalId, err := claims.ParsePrincipalId()
 	if err != nil {
 		SendError(w, http.StatusBadRequest, err.Error())
+	}
+	// parse the request body
+	var body PutDocumentDocumentIdJSONRequestBody
+	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
+		SendError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	// call the document service using the document service client
 	err = s.documentServiceClient.UpdateDocument(

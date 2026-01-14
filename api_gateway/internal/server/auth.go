@@ -17,12 +17,6 @@ import (
 
 // TODO: at some point may want to factor authentication code out into its own package
 
-type PrincipalType string
-const (
-	UserType PrincipalType = "user"
-	GuestType PrincipalType = "guest"
-)
-
 // the differentiation between a user type claims and a guest type claims is implicit for now
 // one can tell that they have a user type token if the token has a UserName
 // this may not be the best way to do this but I will look into other approaches when I understand
@@ -45,9 +39,9 @@ func (c CustomClaims) ParsePrincipalId() (uuid.UUID, error) {
 
 func (c CustomClaims) GetTokenType() PrincipalType {
 	if c.UserName != "" {
-		return UserType
+		return PrincipalTypeUser
 	}
-	return GuestType
+	return PrincipalTypeGuest
 }
 
 var SubjectNotFoundError error = fmt.Errorf("Subject not found in JWT claims")

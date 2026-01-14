@@ -1,0 +1,23 @@
+## Description:
+- implement these 5 permission crud routes:
+    - [x] get all the permissions on a document
+    - [x] create a permission on a document
+        - this should work for both a guest or a user
+    - [x] get the permissions of a principal on a document 
+    - [x] update the permissions of a principal on a document
+        - this should work for both a guest or a user 
+    - [x] delete the permissions of a principal on a document
+        - this should work for both a guest or a user
+- coarse grain authorization checks
+    - [x] only users can create permissions
+        - the document service will verify that the specific user has an owner permission on the document, allowing them to create more permissions
+    - [x] only users can get all the permissions on a document 
+        - the document service will verify that the specific user has owner permission on that document, allowing them to view other users permission
+    - [xs] only users can update a specific permission
+    - [x] only users can delete a specific permission
+- [ ] give the routes another once over to make sure that the correct things are marked as required
+    - [x] request bodies
+    - [x] parameters in request bodies
+    - [ ] parameters in response bodies
+    - [x] parameters in the query
+- [x] validate that routes perform JWT parsing and coarse grain authorization checking of the user type before we deserialize the request body

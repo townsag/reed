@@ -47,8 +47,8 @@ func (c *DocumentServiceClient) CreateDocument(
 	ownerUserId uuid.UUID,
 	documentName *string,
 	documentDescription *string,
-) (*pb.CreateDocumentReply, error) {
-	return c.client.CreateDocument(
+) (uuid.UUID, error) {
+	reply, err := c.client.CreateDocument(
 		ctx,
 		&pb.CreateDocumentRequest{
 			OwnerUserId: ownerUserId.String(),
@@ -59,6 +59,15 @@ func (c *DocumentServiceClient) CreateDocument(
 			},
 		},
 	)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	// parse the returned document id
+	documentId, err := uuid.Parse(reply.DocumentId)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to parse returned document id: %w", err)
+	}
+	return documentId, nil
 }
 
 func (c *DocumentServiceClient) GetDocument(

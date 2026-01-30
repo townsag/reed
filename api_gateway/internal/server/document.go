@@ -366,7 +366,7 @@ func (s *Service) PostDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// call the document service with the document information parsed from
 	// the request body and the user id parsed from the JWT claims
-	resp, err := s.documentServiceClient.CreateDocument(
+	documentId, err := s.documentServiceClient.CreateDocument(
 		r.Context(),
 		userId,
 		request.DocumentName,
@@ -375,12 +375,6 @@ func (s *Service) PostDocument(w http.ResponseWriter, r *http.Request) {
 	// if the call fails, proxy the error back to the client
 	if err != nil {
 		SendError(w, GrpcToHttpStatus(err), err.Error())
-		return
-	}
-	// if the call succeeds, proxy the created document's documentId back to the client
-	documentId, err := uuid.Parse(resp.DocumentId)
-	if err != nil {
-		SendError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	SendJsonResponse(

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	pb "github.com/townsag/reed/document_service/api/v1"
@@ -16,6 +17,12 @@ import (
 )
 
 func main() {
+	// initialize the otel sdk
+	otelShutdown, err := config.SetupOTelSDK(context.Background())
+	if err != nil {
+		log.Fatalf("failed to bootstrap the otel sdk: %v", err)
+	}
+	defer otelShutdown(context.Background())
 	// create a connection to the postgres database
 	cfg, err := config.GetConfiguration()
 	if err != nil {
@@ -37,7 +44,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 	pb.RegisterDocumentServiceServer(s, documentServer)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

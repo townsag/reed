@@ -48,6 +48,8 @@ services:
     build:
       context: ./user_service
       dockerfile: Dockerfile
+      # this is used to indicate which build stage to stop at for docker images 
+      # that have multiple stages
       target: runner
     depends_on:
       postgres:
@@ -61,9 +63,15 @@ services:
       - POSTGRES_DB=document_service
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+    ports:
+      # host:container
+      - "50052:50051"
     build:
       context: ./document_service
       dockerfile: Dockerfile
+      # this is used to indicate which build stage to stop at for docker images
+      # that have multiple stages
       target: runner
     depends_on:
       postgres:

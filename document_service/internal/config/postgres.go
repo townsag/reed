@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"context"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5"
-	// "github.com/exaring/otelpgx"
-	// TODO: ^add otel tracing to the pgxpool
+	"github.com/exaring/otelpgx"
 )
 
 func GetEnvWithDefault(key string, defaultValue string) string {
@@ -39,7 +39,7 @@ func GetConfiguration() (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	// cfg.ConnConfig.Tracer = otelpgx.NewTracer()
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
 	return cfg, nil	
 }
 
@@ -48,10 +48,10 @@ func CreateDBConnectionPool(ctx context.Context, config *pgxpool.Config) (*pgxpo
 	if err != nil {
 		return nil, fmt.Errorf("failed to create a database connection pool: %w", err)
 	}
-	// if err = otelpgx.RecordStats(pool, otelpgx.WithMinimumReadDBStatsInterval(time.Second * 1)); err != nil {
-	// 	pool.Close()
-	// 	return nil, fmt.Errorf("failed to set up database connection pool observability: %w", err)
-	// }
+	if err = otelpgx.RecordStats(pool, otelpgx.WithMinimumReadDBStatsInterval(time.Second * 1)); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to set up database connection pool observability: %w", err)
+	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping the new connection pool: %w", err)

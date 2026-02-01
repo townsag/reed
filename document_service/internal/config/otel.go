@@ -3,20 +3,20 @@ package config
 import (
 	"context"
 	"errors"
-	// "log/slog"
+	"log/slog"
 	"time"
 
-	// "go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 
 	"go.opentelemetry.io/otel/sdk/resource"
 	// "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	// "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
-	// "go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	// "go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
-	// "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/log"
 
 	// "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -84,22 +84,23 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	// shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
 	// otel.SetMeterProvider(meterProvider)
 
-	// // Set up logger provider.
-	// loggerProvider, err := newLoggerProvider(ctx, resource)
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return shutdown, err
-	// }
-	// shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
-	// global.SetLoggerProvider(loggerProvider)
+	// Set up logger provider.
+	loggerProvider, err := newLoggerProvider(ctx, resource)
+	if err != nil {
+		handleErr(err)
+		return shutdown, err
+	}
+	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
+	global.SetLoggerProvider(loggerProvider)
 
 	// create a new slog logger that is backed by a handler that will send all logs that
 	// it receives to otel
-	// defaultLogger := otelslog.NewLogger(
-	// 	"user_service",
-	// 	otelslog.WithLoggerProvider(loggerProvider),
-	// )
-	// slog.SetDefault(defaultLogger)
+	// the given name will be used to identify this instance or this logical service
+	defaultLogger := otelslog.NewLogger(
+		"user_service",
+		otelslog.WithLoggerProvider(loggerProvider),
+	)
+	slog.SetDefault(defaultLogger)
 
 	return shutdown, err
 }
@@ -145,23 +146,23 @@ func newTracerProvider(ctx context.Context, res *resource.Resource) (*trace.Trac
 // 	return meterProvider, nil
 // }
 
-// func newLoggerProvider(ctx context.Context, res *resource.Resource) (*log.LoggerProvider, error) {
-// 	// create a otlp grpc log exporter
-// 	logExporter, err := otlploggrpc.New(ctx)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func newLoggerProvider(ctx context.Context, res *resource.Resource) (*log.LoggerProvider, error) {
+	// create a otlp grpc log exporter
+	logExporter, err := otlploggrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 	// create a stdout log exporter
-// 	stdOutLogExporter, err := stdoutlog.New()
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	// create a stdout log exporter
+	stdOutLogExporter, err := stdoutlog.New()
+	if err != nil {
+		return nil, err
+	}
 
-// 	loggerProvider := log.NewLoggerProvider(
-// 		log.WithResource(res),
-// 		log.WithProcessor(log.NewBatchProcessor(logExporter)),
-// 		log.WithProcessor(log.NewBatchProcessor(stdOutLogExporter)),
-// 	)
-// 	return loggerProvider, nil
-// }
+	loggerProvider := log.NewLoggerProvider(
+		log.WithResource(res),
+		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+		log.WithProcessor(log.NewBatchProcessor(stdOutLogExporter)),
+	)
+	return loggerProvider, nil
+}

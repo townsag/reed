@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"go.opentelemetry.io/otel/sdk/resource"
-	// "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -18,7 +18,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 
-	// "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/semconv/v1.37.0"
 )
@@ -76,13 +76,13 @@ func SetupOTelSDK(ctx context.Context) (func(context.Context) error, error) {
 	otel.SetTracerProvider(tracerProvider)
 
 	//Set up meter provider.
-	// meterProvider, err := newMeterProvider(ctx, resource)
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return shutdown, err
-	// }
-	// shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
-	// otel.SetMeterProvider(meterProvider)
+	meterProvider, err := newMeterProvider(ctx, resource)
+	if err != nil {
+		handleErr(err)
+		return shutdown, err
+	}
+	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
+	otel.SetMeterProvider(meterProvider)
 
 	// Set up logger provider.
 	loggerProvider, err := newLoggerProvider(ctx, resource)
@@ -127,24 +127,24 @@ func newTracerProvider(ctx context.Context, res *resource.Resource) (*trace.Trac
 	return tracerProvider, nil
 }
 
-// func newMeterProvider(ctx context.Context, res *resource.Resource) (*metric.MeterProvider, error) {
-// 	metricExporter, err := otlpmetricgrpc.New(ctx)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func newMeterProvider(ctx context.Context, res *resource.Resource) (*metric.MeterProvider, error) {
+	metricExporter, err := otlpmetricgrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 	meterProvider := metric.NewMeterProvider(
-// 		metric.WithResource(res),
-// 		metric.WithReader(
-// 			metric.NewPeriodicReader(
-// 				metricExporter,
-// 				// Default is 1m. Set to 3s for demonstrative purposes.
-// 				metric.WithInterval(3*time.Second),
-// 			),
-// 		),
-// 	)
-// 	return meterProvider, nil
-// }
+	meterProvider := metric.NewMeterProvider(
+		metric.WithResource(res),
+		metric.WithReader(
+			metric.NewPeriodicReader(
+				metricExporter,
+				// Default is 1m. Set to 3s for demonstrative purposes.
+				metric.WithInterval(3*time.Second),
+			),
+		),
+	)
+	return meterProvider, nil
+}
 
 func newLoggerProvider(ctx context.Context, res *resource.Resource) (*log.LoggerProvider, error) {
 	// create a otlp grpc log exporter

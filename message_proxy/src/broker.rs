@@ -1,47 +1,30 @@
-// use axum::routing::connect;
+use std::clone::Clone;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{
     Sender,
     Receiver,
 };
 use std::sync::{Mutex, Arc};
+use std::hash::Hash;
 use std::collections::HashMap;
-
-// create a struct to represent the broker, this will be available 
-// as top level state
-// create a method on the broker that allow a connection to be registered
-// with the broker. This method should return return a channel transmitter 
-// that a handler can use to send messages to the broker and a channel 
-// receiver that the handler can use to receive messages from the broker
-
-// I might have to leave the broker as some sort of shared state
-// that is reference-able by any handler-task
-// there is a hybrid approach in which the broker is used as shared state when 
-// adding or removing connections but other wise only is accessed via channels
-
-// make a wrapper around the broker that exposes methods to add new connections
-// that internally use a mutex
 
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
 // lifetimes would work on that one
 
-// parameterize the broker struct such that it takes a message type, a connection
-// identifier type, and a filter function that takes a message and a connection
-// identifier and returns true if the message should be sent to that connection
-
-// use the type state function to prevent the run function from being called on 
-// the broker multiple times. Broker and RunningBroker types
-// the same result can also be reached by just starting the broker in the constructor
-// this would allow us to return a join handle which we can use to tell if the 
-// task has finished / failed or stop the task
-// try the broker builder pattern
-
 // consider adding some idea of back pressure
 // consider that this implementation might be simpler if I make the idea of a
 // partition / topic id a first class citizen. Like I could make the 
 
+// remove the clone trait bound on message by using Arc
+// send reference counted pointers to messages through the channels
+
 const BUFFER_SIZE: usize = 100;
+
+pub trait Routable {
+    type Key: Eq + Hash;
+    fn key(&self) -> &Self::Key;
+}
 
 #[derive(Clone,Debug)]
 pub struct Message {
@@ -49,6 +32,18 @@ pub struct Message {
     pub payload: String,
 }
 
+impl Routable for Message {
+    type Key = String;
+    fn key(&self) -> &String {
+        return &self.connection_id;
+    }
+}
+
+/*
+Using the builder pattern for the broker accomplishes two things:
+- we can add ergonomic ways to make many configurations in the future
+- we can prevent the run method of the broker from being scheduled twice
+*/
 pub struct BrokerBuilder {
     buffer_size: usize
 }
@@ -59,13 +54,13 @@ impl BrokerBuilder {
         self
     }
 
-    pub fn build(self) -> (Broker, impl Future<Output = ()>) {
+    pub fn build<M: Routable + Clone>(self) -> (Broker<M>, impl Future<Output = ()>) {
         // create the channel that clients can use to send messages to to the broker
-        let (tx, rx) = mpsc::channel::<Message>(self.buffer_size);
+        let (tx, rx) = mpsc::channel::<M>(self.buffer_size);
         // create the connections hashmap that holds a mapping between the connection id
         // and the channel that is used to pass messages to that connection
         let connections = Arc::new(Mutex::new(
-            HashMap::<String, Sender<Message>>::new(),
+            HashMap::<M::Key, Sender<M>>::new(),
         ));
         let connections_clone = Arc::clone(&connections);
         (Broker{ tx, connections, buffer_size: self.buffer_size }, run_broker(rx, connections_clone))
@@ -78,9 +73,9 @@ impl Default for BrokerBuilder {
     }
 }
 
-async fn run_broker(
-    mut rx: Receiver<Message>, 
-    connections: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+async fn run_broker<M: Routable + Clone>(
+    mut rx: Receiver<M>, 
+    connections: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
 ) {
     loop {
         // TODO: handle the nil case here as that indicates that all the senders have disconnected
@@ -91,13 +86,13 @@ async fn run_broker(
         // regular std::sync::mutex is not async safe
         // we should instead gather all the transmitters that we need to send messages 
         // over first so we can release the lock before performing any async operations
-        let senders: Vec<Sender<Message>> = {
+        let senders: Vec<Sender<M>> = {
             // TODO: I think an error when trying to lock the mutex indicates that another thread
             //       has panicked while holding the lock. In that case we want this thread to panic too
             let connections = connections.lock().unwrap();
             connections
                 .iter()
-                .filter(|elem| -> bool {*elem.0 != message.connection_id})
+                .filter(|(id, _)| *id != message.key())
                 .map(|(_, sender)| sender.clone())
                 .collect()
         };
@@ -113,22 +108,22 @@ async fn run_broker(
     }
 }
 
-pub struct Broker {
+pub struct Broker<M: Routable + Clone> {
     /// transmitter that can be cloned so that handlers can send messages
     /// to the broker
-    tx: Sender<Message>,
+    tx: Sender<M>,
     /// collection of handler connection ids and transmitters that can be 
     /// used to send information to those handlers
-    connections: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    connections: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
     buffer_size: usize,
 }
 
-impl Broker {
+impl<M: Routable + Clone> Broker<M> {
     /// method that can be used to register a new connection with the 
     /// broker. This takes a connection id and returns a mp transmitter that 
     /// the handler can use to send messages and a sp receiver that the handler
     /// can use to receive messages from the broker
-    pub fn register(&self, connection_id: String) -> (Sender<Message>, Receiver<Message>) {
+    pub fn register(&self, connection_id: M::Key) -> (Sender<M>, Receiver<M>) {
         // TODO: do not let the same connection id register twice. This would result in a dropped connection
         //       for the transmitter and receiver associated with the connection the first time that it is registered
         // clone the transmitter that is used to send messages to the broker
@@ -147,7 +142,7 @@ impl Broker {
     }
     /// method that can be used to deregister a connection with the broker
     /// this takes a connection id and returns nothing
-    pub fn deregister(&self, connection_id: &str) {
+    pub fn deregister(&self, connection_id: &M::Key) {
         let mut connections = self.connections.lock().unwrap();
         connections.remove(connection_id);
     }

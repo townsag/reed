@@ -49,58 +49,81 @@ pub struct Message {
     pub payload: String,
 }
 
+pub struct BrokerBuilder {
+    buffer_size: usize
+}
+
+impl BrokerBuilder {
+    pub fn buffer_size(mut self, buffer_size: usize) -> Self {
+        self.buffer_size = buffer_size;
+        self
+    }
+
+    pub fn build(self) -> (Broker, impl Future<Output = ()>) {
+        // create the channel that clients can use to send messages to to the broker
+        let (tx, rx) = mpsc::channel::<Message>(self.buffer_size);
+        // create the connections hashmap that holds a mapping between the connection id
+        // and the channel that is used to pass messages to that connection
+        let connections = Arc::new(Mutex::new(
+            HashMap::<String, Sender<Message>>::new(),
+        ));
+        let connections_clone = Arc::clone(&connections);
+        (Broker{ tx, connections, buffer_size: self.buffer_size }, run_broker(rx, connections_clone))
+    }
+}
+
+impl Default for BrokerBuilder {
+    fn default() -> Self {
+        BrokerBuilder { buffer_size: BUFFER_SIZE }
+    }
+}
+
+async fn run_broker(
+    mut rx: Receiver<Message>, 
+    connections: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+) {
+    loop {
+        // TODO: handle the nil case here as that indicates that all the senders have disconnected
+        //       we don't want to panic on graceful shutdown
+        let message = rx.recv().await.unwrap();
+        // cannot hold the lock across calls to await
+        // this is because the held lock may not be transferable between threads and the 
+        // regular std::sync::mutex is not async safe
+        // we should instead gather all the transmitters that we need to send messages 
+        // over first so we can release the lock before performing any async operations
+        let senders: Vec<Sender<Message>> = {
+            // TODO: I think an error when trying to lock the mutex indicates that another thread
+            //       has panicked while holding the lock. In that case we want this thread to panic too
+            let connections = connections.lock().unwrap();
+            connections
+                .iter()
+                .filter(|elem| -> bool {*elem.0 != message.connection_id})
+                .map(|(_, sender)| sender.clone())
+                .collect()
+        };
+        for sender in senders {
+            // TODO: an error here indicates that there is no longer a receiver listening on this transmitter
+            //       in that case we should not panic here. Instead we should remove that receiver from the 
+            //       mapping
+            // TODO: an error here may also indicate that a buffer is full. This will happen if the receiver is
+            //       slow to process messages. Consider using try-send to prevent slow receivers from blocking
+            //       sending messages to fast receivers
+            sender.send(message.clone()).await.unwrap();
+        }
+    }
+}
+
 pub struct Broker {
     /// transmitter that can be cloned so that handlers can send messages
     /// to the broker
     tx: Sender<Message>,
     /// collection of handler connection ids and transmitters that can be 
     /// used to send information to those handlers
-    connections: Arc<Mutex<HashMap<String, Sender<Message>>>>
+    connections: Arc<Mutex<HashMap<String, Sender<Message>>>>,
+    buffer_size: usize,
 }
 
 impl Broker {
-    pub fn new() -> Broker {
-        let (tx, mut rx ) = mpsc::channel::<Message>(BUFFER_SIZE);
-        let connections = Arc::new(Mutex::new(
-            HashMap::<String, Sender<Message>>::new(),
-        ));
-
-        // move the receiver into the spawned thread
-        let connections_clone = Arc::clone(&connections);
-        tokio::spawn(async move {
-            loop {
-                // TODO: handle the nil case here as that indicates that all the senders have disconnected
-                //       we don't want to panic on graceful shutdown
-                let message = rx.recv().await.unwrap();
-                // cannot hold the lock across calls to await
-                // this is because the held lock may not be transferable between threads and the 
-                // regular std::sync::mutex is not async safe
-                // we should instead gather all the transmitters that we need to send messages 
-                // over first so we can release the lock before performing any async operations
-                let senders: Vec<Sender<Message>> = {
-                    // TODO: I think an error when trying to lock the mutex indicates that another thread
-                    //       has panicked while holding the lock. In that case we want this thread to panic too
-                    let connections = connections_clone.lock().unwrap();
-                    connections
-                        .iter()
-                        .filter(|elem| -> bool {*elem.0 != message.connection_id})
-                        .map(|(_, sender)| sender.clone())
-                        .collect()
-                };
-                for sender in senders {
-                    // TODO: an error here indicates that there is no longer a receiver listening on this transmitter
-                    //       in that case we should not panic here. Instead we should remove that receiver from the 
-                    //       mapping
-                    // TODO: an error here may also indicate that a buffer is full. This will happen if the receiver is
-                    //       slow to process messages. Consider using try-send to prevent slow receivers from blocking
-                    //       sending messages to fast receivers
-                    sender.send(message.clone()).await.unwrap();
-                }
-            }
-        });
-
-        Broker { tx, connections }
-    }
     /// method that can be used to register a new connection with the 
     /// broker. This takes a connection id and returns a mp transmitter that 
     /// the handler can use to send messages and a sp receiver that the handler
@@ -111,7 +134,7 @@ impl Broker {
         // clone the transmitter that is used to send messages to the broker
         let tx_broker = self.tx.clone();
         // create a transmitter, receiver pair for sending messages from the broker to the websocket task
-        let (tx_client, rx_client) = mpsc::channel(BUFFER_SIZE);
+        let (tx_client, rx_client) = mpsc::channel(self.buffer_size);
         {
             // store the transmitter associated with sending messages to this client
             let mut connections = self.connections.lock().unwrap();

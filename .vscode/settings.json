@@ -9,6 +9,7 @@
     "jackc",
     "jetstream",
     "Oapi",
+    "oneshot",
     "otelgrpc",
     "otelpgx",
     "otelslog",

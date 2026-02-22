@@ -18,6 +18,10 @@
     - the broker maintains spsc channel connections with each sender task
     - when the broker receives a message over the channel it forwards that message to the relevant other connections
     - https://claude.ai/chat/8588c7eb-6b91-43bf-81cc-5bc162247cb9
+- good example using axum websockets:
+    - https://github.com/tokio-rs/axum/blob/main/examples/chat/src/main.rs
+- specifics about .with_state in axum:
+    - https://docs.rs/axum/latest/axum/struct.Router.html#method.with_state
 
 ## Notes:
 - the semantics for accessing values declared outside of an async task are similar to the semantics of accessing values that are declared outside of a thread

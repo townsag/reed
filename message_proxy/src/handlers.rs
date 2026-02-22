@@ -1,34 +1,61 @@
+use tokio::sync::mpsc::{Receiver, Sender};
+
 use axum::{
-    extract::ws::{WebSocketUpgrade, WebSocket},
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::State,
     response::Response,
 };
+use futures_util::{SinkExt, StreamExt, stream::SplitStream};
+use futures_util::stream::SplitSink;
 
-pub async fn handler(ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(handle_socket)
+use crate::{AppState, broker::{BrokerMessage, get_id}};
+
+pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket) {
-    // this is odd syntax, while the message we receive over the websocket is a dataframe 
-    // process the message
-    // recv returns an optional result type, this means that there could be some or none
-    // inside of some there could be either a message or an error
-    // what happens next? is there any indication that the websocket is closed when we complete
-    // the while loop?
-    while let Some(msg) = socket.recv().await {
-        // if let allows us to write a shorter version of a match statement
-        // if msg is the Ok variant of the result enum then we destructure the value out of the 
-        // result enum and assign that value to msg which shadows the outer value of msg
-        // this value is then returned to msg, which also shadows the outer value of msg
-        let msg = if let Ok(msg) = msg {
-            msg
-        } else {
-            // in all cases other than the Ok variant of the result enum
-            // we return 
-            return;
-        };
 
-        if socket.send(msg).await.is_err() {
-            return
-        }
+// read messages from the websocket connection and send those messages to the broker
+async fn read(
+    mut receiver: SplitStream<WebSocket>, 
+    sender_broker: Sender<BrokerMessage>,
+    connection_id: String,
+) {
+    while let Some(Ok(Message::Text(msg))) = receiver.next().await {
+        sender_broker.send(BrokerMessage { 
+            connection_id: connection_id.clone(), 
+            payload: msg.to_string() 
+        }).await.unwrap();
+        // TODO: refactor this to have proper error handling
     }
+}
+
+// receive messages from the broker and send them to the websocket connection
+async fn write(
+    mut sender: SplitSink<WebSocket, Message>, 
+    mut receiver_broker: Receiver<BrokerMessage>,
+) {
+    while let Some(msg) = receiver_broker.recv().await {
+        sender.send(Message::Text(msg.payload.into())).await.unwrap();
+    }
+}
+
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    // generate a unique id for the websocket connection
+    let id = get_id();
+    // register the websocket connection with the broker
+    let (
+        sender_broker, receiver_broker
+    ) = state.broker.register(id.to_string());
+    // split the websocket into a message sender and a message receiver task
+    // we will use the receiver to send messages from the client to the broker and the sender 
+    // to send messages from the broker to the client
+    let (sender_ws, receiver_ws) = socket.split();
+    
+    tokio::spawn(write(sender_ws, receiver_broker));
+    tokio::spawn(read(receiver_ws, sender_broker, id.to_string()));
+
+    // TODO: we might want to do some book-keeping when the websocket connection closes
+    //       return some sort of error value from the read and write tasks and use that 
+    //       for book keeping
 }

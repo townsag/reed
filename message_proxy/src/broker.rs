@@ -1,4 +1,5 @@
 use std::clone::Clone;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{
     Sender,
@@ -27,12 +28,12 @@ pub trait Routable {
 }
 
 #[derive(Clone,Debug)]
-pub struct Message {
+pub struct BrokerMessage {
     pub connection_id: String, 
     pub payload: String,
 }
 
-impl Routable for Message {
+impl Routable for BrokerMessage {
     type Key = String;
     fn key(&self) -> &String {
         return &self.connection_id;
@@ -96,6 +97,9 @@ async fn run_broker<M: Routable + Clone>(
                 .map(|(_, sender)| sender.clone())
                 .collect()
         };
+        // we clone the senders here so that we do not have to hold the connections mutex while 
+        // sending messages over channels. The clones of the channel transmitters will go out 
+        // of scope at the end of this loop
         for sender in senders {
             // TODO: an error here indicates that there is no longer a receiver listening on this transmitter
             //       in that case we should not panic here. Instead we should remove that receiver from the 
@@ -103,11 +107,14 @@ async fn run_broker<M: Routable + Clone>(
             // TODO: an error here may also indicate that a buffer is full. This will happen if the receiver is
             //       slow to process messages. Consider using try-send to prevent slow receivers from blocking
             //       sending messages to fast receivers
+            // TODO: remove this clone by creating a reference counted pointer and then passing the reference 
+            //       counted pointer down the channel
             sender.send(message.clone()).await.unwrap();
         }
     }
 }
 
+#[derive(Clone)]
 pub struct Broker<M: Routable + Clone> {
     /// transmitter that can be cloned so that handlers can send messages
     /// to the broker
@@ -146,4 +153,16 @@ impl<M: Routable + Clone> Broker<M> {
         let mut connections = self.connections.lock().unwrap();
         connections.remove(connection_id);
     }
+}
+
+pub fn get_id() -> usize {
+    // using the static keyword is like declaring a piece of memory with the lifetime of 
+    // the program. This memory is shared between all invocations of the get_id function
+    // We use this static variable to hold an atomic integer. That way it can be called
+    // in parallel from multiple threads / tasks without duplicating any ids
+
+    // if we ever want to store these connection ids in the database instead of just using
+    // them in memory we may want to change them to uuid7 instead of usize 
+    static COUNTER:AtomicUsize = AtomicUsize::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }

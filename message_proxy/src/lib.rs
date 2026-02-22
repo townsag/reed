@@ -7,16 +7,25 @@ use axum::{
     Router,
     routing::{any,get},
 };
-use crate::handlers::handler;
+use crate::{broker::{Broker, BrokerBuilder, BrokerMessage}, handlers::handler};
 
-
+#[derive(Clone)]
+struct AppState {
+    broker: Broker<BrokerMessage>,
+}
 
 pub async fn run() {
-    let app = Router::<()>::new();
-    // if we want this to be multiline definition then we have to reassign the variable app because
-    // self moves into the .route method
-    let app = app.route("/", get(|| async {"hello world"}));
-    let app = app.route("/ws", any(handler));
+    let (broker, fut) = BrokerBuilder::default().build::<BrokerMessage>();
+    // TODO: use this join handle to stop the message brokering task on graceful shutdown
+    let _handle = tokio::spawn(fut);
+    // when creating a router the state type parameter indicates the type of the state
+    // struct that has not yet been passed to the router (using .with_state(: S))
+    // this is why we don't parameterize the with_state function, that would indicate
+    // that there is still a state that needs to be passed to the router
+    let app = Router::new()
+        .route("/", get(|| async {"hello world"}))
+        .route("/ws", any(handler))
+        .with_state(AppState { broker });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();

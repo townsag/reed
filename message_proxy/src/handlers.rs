@@ -58,4 +58,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // TODO: we might want to do some book-keeping when the websocket connection closes
     //       return some sort of error value from the read and write tasks and use that 
     //       for book keeping
+
+    // wait for either the read or the write tasks to finish
+    // upon finishing, deregister the connection id from the broker and stop the other task
+    // if it is still running 
 }

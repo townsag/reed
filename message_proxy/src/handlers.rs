@@ -1,32 +1,87 @@
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::oneshot::{
+    self, Receiver as OSReceiver, Sender as OSSender
+};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 use axum::{
-    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::ws::{
+        Message, 
+        WebSocket, 
+        WebSocketUpgrade, 
+        CloseFrame,
+    },
     extract::State,
     response::Response,
 };
-use futures_util::{SinkExt, StreamExt, stream::SplitStream};
-use futures_util::stream::SplitSink;
-
+use futures_util::{
+    SinkExt, 
+    StreamExt, 
+    stream::{SplitStream, SplitSink},
+};
 use crate::{AppState, broker::{BrokerMessage, get_id}};
 
-pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+enum WebsocketLifecycleEvent {
+    ClosedByClient,
+    ClosedByServer,
 }
 
+pub async fn handler(
+    ws: WebSocketUpgrade, 
+    State(state): State<AppState>,
+) -> Response {
+    ws.on_upgrade(|socket| handle_socket(socket, state))
+}
 
 // read messages from the websocket connection and send those messages to the broker
 async fn read(
     mut receiver: SplitStream<WebSocket>, 
     sender_broker: Sender<BrokerMessage>,
+    tx_ws_lifecycle: OSSender<WebsocketLifecycleEvent>,
+    cancel_read_token: CancellationToken,
     connection_id: String,
 ) {
-    while let Some(Ok(Message::Text(msg))) = receiver.next().await {
-        sender_broker.send(BrokerMessage { 
-            connection_id: connection_id.clone(), 
-            payload: msg.to_string() 
-        }).await.unwrap();
-        // TODO: refactor this to have proper error handling
+    loop {
+        tokio::select! {
+            result = receiver.next() => {
+                match result {
+                    Some(Ok(Message::Text(payload))) => {
+                        let message = BrokerMessage {
+                            connection_id: connection_id.clone(),
+                            payload: payload.to_string(),
+                        };
+                        if let Err(_) = sender_broker.send(message).await {
+                            // receiving an error when trying to send to the broker indicates that 
+                            // the broker receiver has been dropped and closed, we should send a 
+                            // message indicating that there is an internal error and drop the 
+                            // websocket connection
+                            let _ = tx_ws_lifecycle.send(WebsocketLifecycleEvent::ClosedByServer);
+                            return
+                        }
+                    },
+                    // handle the explicit close message from the client
+                    Some(Ok(Message::Close(_close_frame))) => {
+                        // connection closed with closing frame
+                        let _ = tx_ws_lifecycle.send(WebsocketLifecycleEvent::ClosedByClient);
+                        return
+                    },
+                    Some(Ok(_)) => {
+                        // ignore ping, pong, and binary type messages
+                    },
+                    // handle failed reads from the websocket and closed websocket connections
+                    Some(Err(_e)) => {},
+                    None => {
+                        // connection closed without closing frame
+                        let _ = tx_ws_lifecycle.send(WebsocketLifecycleEvent::ClosedByClient);
+                        return
+                    },
+                }
+            }
+            _ = cancel_read_token.cancelled() => {
+                return
+            }
+        }
     }
 }
 
@@ -34,9 +89,66 @@ async fn read(
 async fn write(
     mut sender: SplitSink<WebSocket, Message>, 
     mut receiver_broker: Receiver<BrokerMessage>,
+    mut rx_ws_lifecycle: OSReceiver<WebsocketLifecycleEvent>,
+    cancel_read_token: CancellationToken,
 ) {
-    while let Some(msg) = receiver_broker.recv().await {
-        sender.send(Message::Text(msg.payload.into())).await.unwrap();
+    loop {
+        // we need to use this tokio select statement to prevent dangling write tasks
+        // in the case that the websocket disconnects, the write task may not know that 
+        // the websocket connection has already dropped if there are not other clients
+        // sending messages for the write task to send over the channel
+        // using a oneshot channel to communicate from the reader to the writer allows
+        // us to know that the connection has been dropped as soon as we have read the
+        // last message
+        tokio::select! {
+            message = receiver_broker.recv() => {
+                match message {
+                    None => {
+                        // handle closure of the receiver from the broker
+                        // this is an unrecoverable internal server error, we should close the connection
+                        let _ = sender.send(Message::Close(Some(
+                            CloseFrame { code: 1011, reason: "internal server error".into()
+                        })));
+                        cancel_read_token.cancel();
+                        return
+                    },
+                    Some(msg) => {
+                        // TODO: handle failures to send ws messages to the client
+                        // TODO: batch send messages
+                        sender.send(Message::Text(msg.payload.into())).await.unwrap();
+                    }
+                }
+            }
+            // use a mutable reference to the oneshot channel because otherwise each loop
+            // would consume the channel
+            ws_lifecycle_message = &mut rx_ws_lifecycle => {
+                match ws_lifecycle_message {
+                    // upon receiving a oneshot message that says message closed by the server
+                    // we should send a closing frame and then close the connection
+                    Ok(WebsocketLifecycleEvent::ClosedByClient) => {
+                        // do nothing, the connection is already closed...
+                        return
+                    },
+                    Ok(WebsocketLifecycleEvent::ClosedByServer) => {
+                        // send a close frame over the websocket connection
+                        let _ = sender.send(Message::Close(Some(
+                            CloseFrame { code: 1011, reason: "internal server error".into()
+                        })));
+                        return
+                    },
+                    Err(_e) => {
+                        // error indicates that the oneshot channel sender has been dropped
+                        // this means that the task associated with reading from the websocket
+                        // has stopped
+                        // attempt to send a closing frame if possible
+                        let _ = sender.send(Message::Close(Some(
+                            CloseFrame { code: 1011, reason: "internal server error".into()
+                        })));
+                        return
+                    },
+                }
+            }
+        }
     }
 }
 
@@ -47,19 +159,32 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (
         sender_broker, receiver_broker
     ) = state.broker.register(id.to_string());
+    // create a oneshot channel that the read task can use to send websocket lifecycle
+    // events to the write task
+    let (
+        tx_ws_lifecycle, rx_ws_lifecycle
+    ) = oneshot::channel();
+    // create a cancellation token that write task can use to signal to the read task that 
+    // it should shut down. We use a cancellation token here instead of a channel because 
+    // we do not need to communicate the reason for cancellation
+    let cancel_read_token = CancellationToken::new();
     // split the websocket into a message sender and a message receiver task
     // we will use the receiver to send messages from the client to the broker and the sender 
     // to send messages from the broker to the client
     let (sender_ws, receiver_ws) = socket.split();
     
-    tokio::spawn(write(sender_ws, receiver_broker));
-    tokio::spawn(read(receiver_ws, sender_broker, id.to_string()));
+    let mut set = JoinSet::new();
+    set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), id.to_string()));
+    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token));
+
+    let _ = set.join_all();
 
     // TODO: we might want to do some book-keeping when the websocket connection closes
     //       return some sort of error value from the read and write tasks and use that 
     //       for book keeping
 
-    // wait for either the read or the write tasks to finish
-    // upon finishing, deregister the connection id from the broker and stop the other task
-    // if it is still running 
+    // wait for both the read or the write tasks to finish
+    // upon finishing, deregister the connection id from the broker
+    state.broker.deregister(&id.to_string());
+
 }

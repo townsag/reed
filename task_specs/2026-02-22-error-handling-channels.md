@@ -37,12 +37,12 @@ flowchart LR
     1. sending messages from a websocket handler (read) to the broker
         - Error
             - this indicates that the broker receiver has been dropped, this can only mean that the broker is no longer working
-            - [ ] drop the websocket connection
-                - [ ] deregister the connection with the broker
+            - [x] drop the websocket connection
+                - [x] deregister the connection with the broker
                 - let the transmitter and receiver go out of scope
-                - [ ] send a closing frame
-                - [ ] stop the writer task
-                    - [ ] use a oneshot channel from the reader task to the writer task to indicate that the writer task should send a closing frame and then drop
+                - [x] send a closing frame
+                - [x] stop the writer task
+                    - [x] use a oneshot channel from the reader task to the writer task to indicate that the writer task should send a closing frame and then drop
                         - use tokio::select to read from one of two channels in the writer task, either the receiver from the broker or the oneshot channel from the reader
         - Blocking wait
             - this indicates that the broker receiver cannot process messages fast enough to keep up with the number of connections that are sending messages
@@ -57,20 +57,20 @@ flowchart LR
         - use try send
             - Error disconnected
                 - this would indicate that the task receiving messages from the broker and sending websocket messages has panicked
-                - [ ] delete that connection from the mapping
+                - [x] delete that connection from the mapping
                 - probably delete the dropped connections from the mapping all at once after iterating through the map of all the connections
             - Error full buffer
                 - we don't want slow consumers to hinder fast consumers and fast producers
                 - could this eventually lead to metastable failure?
-                - [ ] drop the message for that connection
+                - [x] drop the message for that connection
     5. Receiving messages from the broker
         - None variant
             - this indicates that the transmitter for this connection has already been dropped or closed
             - the broker is no longer tracking this connection
-            - [ ] drop this websocket connection:
-                - [ ] deregister the connection from the broker
-                - [ ] send a closing frame
-                - [ ] stop the receiver task
+            - [x] drop this websocket connection:
+                - [x] deregister the connection from the broker
+                - [x] send a closing frame
+                - [x] stop the receiver task
 - calls to deregister for connection ids that are not in the connections map should not produce a panic in the broker task
 - is it possible to know at compile time that the broker struct thread cannot panic?
 

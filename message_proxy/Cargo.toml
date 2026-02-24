@@ -7,3 +7,4 @@ edition = "2024"
 axum = { version = "0.8.8", features = ["ws"] }
 futures-util = "0.3.32"
 tokio = { version = "1.49.0", features = ["full"] }
+tokio-util = "0.7.18"

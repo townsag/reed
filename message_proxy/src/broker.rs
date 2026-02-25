@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::{
     Sender,
     Receiver,
+    error::TrySendError,
 };
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
@@ -23,7 +24,7 @@ use std::collections::HashMap;
 const BUFFER_SIZE: usize = 100;
 
 pub trait Routable {
-    type Key: Eq + Hash;
+    type Key: Eq + Hash + Clone;
     fn key(&self) -> &Self::Key;
 }
 
@@ -79,37 +80,66 @@ async fn run_broker<M: Routable + Clone>(
     connections: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
 ) {
     loop {
-        // TODO: handle the nil case here as that indicates that all the senders have disconnected
-        //       we don't want to panic on graceful shutdown
-        let message = rx.recv().await.unwrap();
+        // handle the None case here as that indicates that all the senders have disconnected
+        // we don't want to panic on graceful shutdown
+        let message = match rx.recv().await{
+            Some(msg) => msg,
+            None => return,
+        };
         // cannot hold the lock across calls to await
         // this is because the held lock may not be transferable between threads and the 
         // regular std::sync::mutex is not async safe
         // we should instead gather all the transmitters that we need to send messages 
         // over first so we can release the lock before performing any async operations
-        let senders: Vec<Sender<M>> = {
+        let senders: Vec<(M::Key, Sender<M>)> = {
             // TODO: I think an error when trying to lock the mutex indicates that another thread
             //       has panicked while holding the lock. In that case we want this thread to panic too
             let connections = connections.lock().unwrap();
             connections
+                // iter does not take ownership of any of the values in the collection, so we are iterating
+                // over tuples of references to keys and values. We cannot take ownership of the values
+                // in the hashmap because we cannot consume the hashmap
                 .iter()
+                // filter takes references to references so that it does not consume the elements 
+                // that it is filtering over while filtering
                 .filter(|(id, _)| *id != message.key())
-                .map(|(_, sender)| sender.clone())
+                // map does not take references to elements because it consumes the elements that 
+                // we are iterating over
+                .map(|(id, sender)| (id.clone(), sender.clone()))
                 .collect()
         };
         // we clone the senders here so that we do not have to hold the connections mutex while 
         // sending messages over channels. The clones of the channel transmitters will go out 
         // of scope at the end of this loop
-        for sender in senders {
-            // TODO: an error here indicates that there is no longer a receiver listening on this transmitter
-            //       in that case we should not panic here. Instead we should remove that receiver from the 
-            //       mapping
-            // TODO: an error here may also indicate that a buffer is full. This will happen if the receiver is
-            //       slow to process messages. Consider using try-send to prevent slow receivers from blocking
-            //       sending messages to fast receivers
+
+        // we create a collection of connection_ids and drop them after the loop. This is so
+        // that we only have to acquire the lock once to drop all the dead connections instead
+        // of once for each dead connection
+        let mut connections_to_drop: Vec<M::Key> = vec![];
+
+        for (key, sender) in senders {
             // TODO: remove this clone by creating a reference counted pointer and then passing the reference 
             //       counted pointer down the channel
-            sender.send(message.clone()).await.unwrap();
+            let result = sender.try_send(message.clone());
+            match result {
+                Ok(_) => (),
+                Err(TrySendError::Full(_)) => {
+                    // drop the data that would have been sent to this connection
+                    // should we keep track of the number of times that this happens as a way to tune the buffer size
+                },
+                Err(TrySendError::Closed(_)) => {
+                    // add this connection id to the list of connection ids for which we are going to
+                    // delete the connection_id, transmitter pair from the mapping 
+                    connections_to_drop.push(key);
+                },
+            }
+        }
+        // TODO: we can eliminate the need for the Clone trait bound and the second lock of the connections
+        //       mutex because we no longer have the problem of holding the mutex across async calls. We can
+        //       hold the mutex while iterating and delete from the map while iterating
+        let mut connections = connections.lock().unwrap();
+        for key in connections_to_drop {
+            connections.remove(&key);
         }
     }
 }

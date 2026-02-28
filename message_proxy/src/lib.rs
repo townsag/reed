@@ -22,7 +22,7 @@ pub async fn run() {
     // that there is still a state that needs to be passed to the router
     let app = Router::new()
         .route("/", get(|| async {"hello world"}))
-        .route("/ws", any(handler))
+        .route("/ws/{topic_id}", any(handler))
         .with_state(AppState { broker });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

@@ -15,6 +15,7 @@ use axum::{
         WebSocketUpgrade, 
         CloseFrame,
     },
+    extract::Path,
     extract::State,
     response::Response,
 };
@@ -33,9 +34,10 @@ enum WebsocketLifecycleEvent {
 
 pub async fn handler(
     ws: WebSocketUpgrade, 
+    Path(topic_id): Path<String>,
     State(state): State<AppState>,
 ) -> Response {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    ws.on_upgrade(|socket| handle_socket(socket, topic_id, state))
 }
 
 // read messages from the websocket connection and send those messages to the broker
@@ -173,13 +175,13 @@ async fn write(
 }
 
 // TODO: parse a 
-async fn handle_socket(socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, topic_id: String, state: AppState) {
     // generate a unique id for the websocket connection
-    let id = get_id();
+    let connection_id = get_id();
     // register the websocket connection with the broker
     let (
         sender_broker, receiver_broker
-    ) = state.broker.register(id.to_string());
+    ) = state.broker.register(topic_id);
     // create a oneshot channel that the read task can use to send websocket lifecycle
     // events to the write task
     let (
@@ -195,8 +197,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (sender_ws, receiver_ws) = socket.split();
     
     let mut set = JoinSet::new();
-    set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), id.to_string()));
-    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, id.to_string()));
+    set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), connection_id.to_string()));
+    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, connection_id.to_string()));
 
     let _ = set.join_all();
 

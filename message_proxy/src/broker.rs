@@ -1,4 +1,5 @@
 use std::clone::Clone;
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::broadcast::{
     self, Receiver, Sender, error::RecvError,
@@ -22,7 +23,7 @@ use std::collections::HashMap;
 const BUFFER_SIZE: usize = 100;
 
 pub trait Routable {
-    type Key: Eq + Hash + Clone;
+    type Key: Eq + Hash + Clone + Debug;
     fn key(&self) -> &Self::Key;
 }
 

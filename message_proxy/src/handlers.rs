@@ -195,12 +195,10 @@ async fn handle_socket(socket: WebSocket, topic_id: String, state: AppState) {
     // we will use the receiver to send messages from the client to the broker and the sender 
     // to send messages from the broker to the client
     let (sender_ws, receiver_ws) = socket.split();
-    
     let mut set = JoinSet::new();
     set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), connection_id.to_string()));
     set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, connection_id.to_string()));
-
-    let _ = set.join_all();
+    let _ = set.join_all().await;
 
     // TODO: we might want to do some book-keeping when the websocket connection closes
     //       return some sort of error value from the read and write tasks and use that 

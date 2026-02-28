@@ -8,6 +8,14 @@ use axum::{
     routing::{any,get},
 };
 use crate::{broker::{Broker, BrokerBuilder, BrokerMessage}, handlers::handler};
+use tracing::{
+    event,
+    Level,
+};
+use tracing_subscriber::{
+    filter::LevelFilter,
+};
+
 
 #[derive(Clone)]
 struct AppState {
@@ -15,6 +23,8 @@ struct AppState {
 }
 
 pub async fn run() {
+    tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
+    
     let broker = BrokerBuilder::default().build::<BrokerMessage>();
     // when creating a router the state type parameter indicates the type of the state
     // struct that has not yet been passed to the router (using .with_state(: S))
@@ -26,5 +36,6 @@ pub async fn run() {
         .with_state(AppState { broker });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    event!(Level::INFO, "starting server on port 3000");
     axum::serve(listener, app).await.unwrap();
 }

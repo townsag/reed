@@ -15,9 +15,7 @@ struct AppState {
 }
 
 pub async fn run() {
-    let (broker, fut) = BrokerBuilder::default().build::<BrokerMessage>();
-    // TODO: use this join handle to stop the message brokering task on graceful shutdown
-    let _handle = tokio::spawn(fut);
+    let broker = BrokerBuilder::default().build::<BrokerMessage>();
     // when creating a router the state type parameter indicates the type of the state
     // struct that has not yet been passed to the router (using .with_state(: S))
     // this is why we don't parameterize the with_state function, that would indicate

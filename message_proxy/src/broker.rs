@@ -1,11 +1,9 @@
 use std::clone::Clone;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{
-    Sender,
-    Receiver,
-    error::TrySendError,
+use tokio::sync::broadcast::{
+    self, Receiver, Sender, error::RecvError,
 };
+// use the std implementation of Mutex because we don't have to hold the lock across await points
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
 use std::collections::HashMap;
@@ -56,16 +54,13 @@ impl BrokerBuilder {
         self
     }
 
-    pub fn build<M: Routable + Clone>(self) -> (Broker<M>, impl Future<Output = ()>) {
-        // create the channel that clients can use to send messages to to the broker
-        let (tx, rx) = mpsc::channel::<M>(self.buffer_size);
-        // create the connections hashmap that holds a mapping between the connection id
-        // and the channel that is used to pass messages to that connection
-        let connections = Arc::new(Mutex::new(
-            HashMap::<M::Key, Sender<M>>::new(),
-        ));
-        let connections_clone = Arc::clone(&connections);
-        (Broker{ tx, connections, buffer_size: self.buffer_size }, run_broker(rx, connections_clone))
+    pub fn build<M: Routable + Clone>(self) -> Broker<M> {
+        Broker{
+            topics: Arc::new(Mutex::new(
+                HashMap::<M::Key, Sender<M>>::new()
+            )),
+            buffer_size: self.buffer_size,
+        }
     }
 }
 
@@ -75,113 +70,84 @@ impl Default for BrokerBuilder {
     }
 }
 
-async fn run_broker<M: Routable + Clone>(
-    mut rx: Receiver<M>, 
-    connections: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
-) {
-    loop {
-        // handle the None case here as that indicates that all the senders have disconnected
-        // we don't want to panic on graceful shutdown
-        let message = match rx.recv().await{
-            Some(msg) => msg,
-            None => return,
-        };
-        // cannot hold the lock across calls to await
-        // this is because the held lock may not be transferable between threads and the 
-        // regular std::sync::mutex is not async safe
-        // we should instead gather all the transmitters that we need to send messages 
-        // over first so we can release the lock before performing any async operations
-        let senders: Vec<(M::Key, Sender<M>)> = {
-            // TODO: I think an error when trying to lock the mutex indicates that another thread
-            //       has panicked while holding the lock. In that case we want this thread to panic too
-            let connections = connections.lock().unwrap();
-            connections
-                // iter does not take ownership of any of the values in the collection, so we are iterating
-                // over tuples of references to keys and values. We cannot take ownership of the values
-                // in the hashmap because we cannot consume the hashmap
-                .iter()
-                // filter takes references to references so that it does not consume the elements 
-                // that it is filtering over while filtering
-                .filter(|(id, _)| *id != message.key())
-                // map does not take references to elements because it consumes the elements that 
-                // we are iterating over
-                .map(|(id, sender)| (id.clone(), sender.clone()))
-                .collect()
-        };
-        // we clone the senders here so that we do not have to hold the connections mutex while 
-        // sending messages over channels. The clones of the channel transmitters will go out 
-        // of scope at the end of this loop
+pub struct WrappedReceiver<M: Routable + Clone> {
+    topic_id: M::Key,
+    // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
+    receiver: Receiver<M>,
+    topics: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
+}
 
-        // we create a collection of connection_ids and drop them after the loop. This is so
-        // that we only have to acquire the lock once to drop all the dead connections instead
-        // of once for each dead connection
-        let mut connections_to_drop: Vec<M::Key> = vec![];
+impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
+    fn drop(&mut self) {
+        // upon this receiver going out of scope, we need to check if there are any remaining
+        // receivers open for this topic (other than this receiver) and delete the topic from
+        // the mapping if there are any other receivers
 
-        for (key, sender) in senders {
-            // TODO: remove this clone by creating a reference counted pointer and then passing the reference 
-            //       counted pointer down the channel
-            let result = sender.try_send(message.clone());
-            match result {
-                Ok(_) => (),
-                Err(TrySendError::Full(_)) => {
-                    // drop the data that would have been sent to this connection
-                    // should we keep track of the number of times that this happens as a way to tune the buffer size
-                },
-                Err(TrySendError::Closed(_)) => {
-                    // add this connection id to the list of connection ids for which we are going to
-                    // delete the connection_id, transmitter pair from the mapping 
-                    connections_to_drop.push(key);
-                },
+        // if the call to lock the mutex fails, that means that another thread has panicked 
+        // while holding the mutex. In that case we can return
+        if let Ok(mut topics) = self.topics.lock() {
+            // if there are no other receivers for this topic, we should expect the receiver 
+            // count to be 1 or 0. Remove the entry from the hashmap if there are no other
+            // receivers
+            if let Some(tx) = topics.get(&self.topic_id) && tx.receiver_count() <= 1 {
+                topics.remove(&self.topic_id);
             }
-        }
-        // TODO: we can eliminate the need for the Clone trait bound and the second lock of the connections
-        //       mutex because we no longer have the problem of holding the mutex across async calls. We can
-        //       hold the mutex while iterating and delete from the map while iterating
-        let mut connections = connections.lock().unwrap();
-        for key in connections_to_drop {
-            connections.remove(&key);
         }
     }
 }
 
+impl<M: Routable + Clone> WrappedReceiver<M> {
+    // implementing the recv function on the wrapped receiver and making the underlying receiver
+    // private means that clients can receive from the broadcast channel without being able to
+    // clone the broadcast channel. This is important because we cleanup the topic from the topic
+    // hashmap while the last broadcast channel receiver is being dropped but we only put the 
+    // cleanup logic in the drop function of the receiver wrapper, not in the drop function of 
+    // the receiver itself 
+    pub async fn recv(&mut self) -> Result<M, RecvError> {
+        return self.receiver.recv().await;
+    }
+}
+
+
 #[derive(Clone)]
 pub struct Broker<M: Routable + Clone> {
-    /// transmitter that can be cloned so that handlers can send messages
-    /// to the broker
-    tx: Sender<M>,
-    /// collection of handler connection ids and transmitters that can be 
-    /// used to send information to those handlers
-    connections: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
+    // mapping of topic ids to senders that can be used to signal the subscribers to a topic
+    topics: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
     buffer_size: usize,
 }
 
 impl<M: Routable + Clone> Broker<M> {
-    /// method that can be used to register a new connection with the 
-    /// broker. This takes a connection id and returns a mp transmitter that 
-    /// the handler can use to send messages and a sp receiver that the handler
-    /// can use to receive messages from the broker
-    pub fn register(&self, connection_id: M::Key) -> (Sender<M>, Receiver<M>) {
-        // TODO: do not let the same connection id register twice. This would result in a dropped connection
-        //       for the transmitter and receiver associated with the connection the first time that it is registered
-        // clone the transmitter that is used to send messages to the broker
-        let tx_broker = self.tx.clone();
-        // create a transmitter, receiver pair for sending messages from the broker to the websocket task
-        let (tx_client, rx_client) = mpsc::channel(self.buffer_size);
-        {
-            // store the transmitter associated with sending messages to this client
-            let mut connections = self.connections.lock().unwrap();
-            connections.insert(connection_id, tx_client);
-        }
+    // method that can be used by a websocket client to subscribe to a topic in the broker
+    // pub fn subscribe(&self, topic_id: M::Key) -> Subscription<M> {
+        
+    // }
 
-        // return the transmitter used to send messages to the broker and the receiver used to
-        // get messages from the broker
-        (tx_broker, rx_client)
-    }
-    /// method that can be used to deregister a connection with the broker
-    /// this takes a connection id and returns nothing
-    pub fn deregister(&self, connection_id: &M::Key) {
-        let mut connections = self.connections.lock().unwrap();
-        connections.remove(connection_id);
+    
+    pub fn register(&self, topic_id: M::Key) -> (Sender<M>, WrappedReceiver<M>) {
+        // check the topics hashmap to see if there is already a broadcast channel for that topic_id
+        let mut topics= self.topics.lock().unwrap();
+        // TODO: ^this should not panic, come back to this when I understand errors well enough
+        //       to return a proper error here
+
+        // The topics list stores senders, we want to access the sender for the topic
+        // id for which we are registering a connection. If the sender does not exist, then
+        // we create a new sender. Either way we copy the sender from the hashmap
+        let tx = topics
+            // entry takes ownership because there is a chance that we will have to insert this key into
+            // the map
+            .entry(topic_id.clone())
+            .or_insert_with(|| broadcast::channel(self.buffer_size).0)
+            // you want to call .clone on channel senders to create copies of them, this is different
+            // from using Arc::clone() for making new reference counted pointers. In that case we use
+            // the Arc::clone() function syntax to indicate that there is no copying going on. In this
+            // case we indicate that there is a copy going on with the .clone() function
+            .clone();
+        // create a new receiver
+        // we pass &self.topics into clone because clone does not consume the original pointer
+        let wrx = WrappedReceiver { 
+            topic_id: topic_id, receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
+        };
+        (tx, wrx)
     }
 }
 

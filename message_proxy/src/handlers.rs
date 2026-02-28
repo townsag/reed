@@ -1,4 +1,7 @@
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::broadcast::{
+    Sender, 
+    error::RecvError,
+};
 use tokio::sync::oneshot::{
     self, Receiver as OSReceiver, Sender as OSSender
 };
@@ -20,6 +23,7 @@ use futures_util::{
     StreamExt, 
     stream::{SplitStream, SplitSink},
 };
+use crate::broker::WrappedReceiver;
 use crate::{AppState, broker::{BrokerMessage, get_id}};
 
 enum WebsocketLifecycleEvent {
@@ -51,7 +55,7 @@ async fn read(
                             connection_id: connection_id.clone(),
                             payload: payload.to_string(),
                         };
-                        if let Err(_) = sender_broker.send(message).await {
+                        if let Err(_) = sender_broker.send(message) {
                             // receiving an error when trying to send to the broker indicates that 
                             // the broker receiver has been dropped and closed, we should send a 
                             // message indicating that there is an internal error and drop the 
@@ -88,9 +92,10 @@ async fn read(
 // receive messages from the broker and send them to the websocket connection
 async fn write(
     mut sender: SplitSink<WebSocket, Message>, 
-    mut receiver_broker: Receiver<BrokerMessage>,
+    mut receiver_broker: WrappedReceiver<BrokerMessage>,
     mut rx_ws_lifecycle: OSReceiver<WebsocketLifecycleEvent>,
     cancel_read_token: CancellationToken,
+    connection_id: String,
 ) {
     loop {
         // we need to use this tokio select statement to prevent dangling write tasks
@@ -103,19 +108,34 @@ async fn write(
         tokio::select! {
             message = receiver_broker.recv() => {
                 match message {
-                    None => {
+                    Ok(msg) => {
+                        if msg.connection_id == connection_id {
+                            // TODO: check that this does what I think it does, can continue be used
+                            //       inside of a tokio select statement
+                            continue
+                        }
+                        // TODO: batch read messages from the broker queue, use try receive
+                        // TODO: batch send messages, concatenate many broker messages into one ws message
+                        if let Err(_) = sender.send(Message::Text(msg.payload.into())).await {
+                            // if we fail to send a message to the websocket client, return from the websocket
+                            // write handler
+                            cancel_read_token.cancel();
+                            return;
+                        }
+                    },
+                    Err(RecvError::Closed) => {
                         // handle closure of the receiver from the broker
                         // this is an unrecoverable internal server error, we should close the connection
                         let _ = sender.send(Message::Close(Some(
-                            CloseFrame { code: 1011, reason: "internal server error".into()
-                        })));
+                            CloseFrame { code: 1011, reason: "internal server error".into()},
+                        )));
                         cancel_read_token.cancel();
                         return
                     },
-                    Some(msg) => {
-                        // TODO: handle failures to send ws messages to the client
-                        // TODO: batch send messages
-                        sender.send(Message::Text(msg.payload.into())).await.unwrap();
+                    Err(RecvError::Lagged(_)) => {
+                        // TODO: this is the case in which we missed some messages sent to this topic
+                        //       by some fast senders. We should read the missed messages from the
+                        //       database so that we can catch up
                     }
                 }
             }
@@ -152,6 +172,7 @@ async fn write(
     }
 }
 
+// TODO: parse a 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     // generate a unique id for the websocket connection
     let id = get_id();
@@ -175,16 +196,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     
     let mut set = JoinSet::new();
     set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), id.to_string()));
-    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token));
+    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, id.to_string()));
 
     let _ = set.join_all();
 
     // TODO: we might want to do some book-keeping when the websocket connection closes
     //       return some sort of error value from the read and write tasks and use that 
     //       for book keeping
-
-    // wait for both the read or the write tasks to finish
-    // upon finishing, deregister the connection id from the broker
-    state.broker.deregister(&id.to_string());
-
 }

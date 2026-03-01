@@ -59,7 +59,7 @@ pub fn register(&self, connection_id: M::Key, topic_id: M::Key) -> (Sender<M>, R
     - batch receive with try receive in a loop
 
 
-- [ ] handle errors 
+- [x] handle errors 
     1. reading from the websocket receiver
         - [x] close the websocket connection
         - [x] drop the sender and receiver for this connection
@@ -83,6 +83,51 @@ pub fn register(&self, connection_id: M::Key, topic_id: M::Key) -> (Sender<M>, R
                 - count the number of active senders only, not the number of active receivers
                 - this is because
 - [x] update the broker so that it uses broadcast
+    - ensure that the last receiver for a topic being dropped means that the topic is removed from the topics hashmap
+- [x] update the handlers so that they take a topic_id
+
+## Diagram
+```mermaid
+flowchart LR
+    subgraph Handler["Connection Handler"]
+        R["Reader"]
+        W["Writer"]
+    end
+
+    subgraph Broker["In-Memory Message Broker (broadcast per topic_id)"]
+        BS["Broadcast Sender"]
+        BR["Broadcast Receiver"]
+    end
+
+    S["Signal exit with closing frame"]
+    RC["Read task exit"]
+
+    R -->|"read ws msg ① send"| CH1((" "))
+    CH1 -->|"② send succeeds"| BS
+    BS --> BR
+    BR -.->|"③ broadcast receive"| CH2((" "))
+    CH2 -->|"④ receive succeeds"| W
+    W -- "write succeeds" --> G["✔"]
+
+    R -- "ws read err: close ws · drop tx+rx · signal writer" --> ER1["✕"]
+    R -- "ws read closing frame" --> RC
+    RC -- "signal exit" --> W
+    CH1 -- "err: no receivers · drop tx · remove topic if last" --> ER2["✕"]
+    ER2 & ER1 --> S
+    S --> W
+    CH2 -- "Err: RecvClosed → send close frame" --> EW1["✕"]
+    CH2 -- "Err: RecvLagged" --> EW3["ignore"]
+    W -- "err: close ws · drop tx · remove topic if last sender" --> EW2["✕"]
+    W --> WC["write task exit"]
+
+    style CH1 fill:#f0a500,stroke:#c07800,color:#000
+    style CH2 fill:#f0a500,stroke:#c07800,color:#000
+    style ER1 fill:#e53935,stroke:#b71c1c,color:#fff
+    style ER2 fill:#e53935,stroke:#b71c1c,color:#fff
+    style EW1 fill:#e53935,stroke:#b71c1c,color:#fff
+    style EW2 fill:#e53935,stroke:#b71c1c,color:#fff
+    style G fill:#90EE90,stroke:#228B22
+```
 
 ## Thoughts on Persistence and the broker:
 - messages should be persistent before they are sent to the broker

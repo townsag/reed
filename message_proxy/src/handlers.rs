@@ -76,6 +76,7 @@ async fn read(
                         // ignore ping, pong, and binary type messages
                     },
                     // handle failed reads from the websocket and closed websocket connections
+                    // error frames are likely to be followed by None frames, so we can ignore them
                     Some(Err(_e)) => {},
                     None => {
                         // connection closed without closing frame

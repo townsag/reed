@@ -2,6 +2,10 @@
 mod handlers;
 // define a module for the message broker
 pub mod broker;
+pub mod config {
+    pub mod postgres;
+}
+mod repository;
 
 use axum::{
     Router,

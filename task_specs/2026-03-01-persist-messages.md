@@ -25,3 +25,8 @@
 ## Resources:
 - example of using sqlx and axum
     - https://github.com/launchbadge/sqlx/blob/main/examples/postgres/axum-social-with-tests/src/http/user.rs
+- thoughtful discussion of sqlc vs sqlx
+    - https://news.ycombinator.com/item?id=44715579
+    - includes discussion of query parsing
+- useful for later if I dont want to have a running database in the cicd pipeline
+    - https://github.com/launchbadge/sqlx/blob/main/sqlx-cli/README.md#enable-building-in-offline-mode-with-query

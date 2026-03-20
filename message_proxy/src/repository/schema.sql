@@ -1,7 +1,7 @@
 CREATE TABLE messages (
-    topic_id UUID PRIMARY KEY,
-    user_id UUID PRIMARY KEY,
-    offset INTEGER,
+    topic_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    message_offset INTEGER,
     content TEXT,
-    PRIMARY KEY (topic_id, user_id, offset)
+    PRIMARY KEY (topic_id, user_id, message_offset)
 );

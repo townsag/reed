@@ -7,7 +7,7 @@ use tokio::sync::oneshot::{
 };
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-
+use uuid::Uuid;
 use axum::{
     extract::ws::{
         Message, 
@@ -24,39 +24,49 @@ use futures_util::{
     StreamExt, 
     stream::{SplitStream, SplitSink},
 };
-use crate::broker::WrappedReceiver;
-use crate::{AppState, broker::{BrokerMessage, get_id}};
+use crate::broker::{Routable, WrappedReceiver};
+use crate::repository::{Repository, RepoMessage};
+use crate::{AppState, broker::BrokerMessage};
 
 enum WebsocketLifecycleEvent {
     ClosedByClient,
     ClosedByServer,
 }
 
-pub async fn handler(
+pub async fn handler<R: Repository>(
     ws: WebSocketUpgrade, 
-    Path(topic_id): Path<String>,
-    State(state): State<AppState>,
+    Path((topic_id, user_id)): Path<(Uuid, Uuid)>,
+    State(state): State<AppState<R>>,
 ) -> Response {
-    ws.on_upgrade(|socket| handle_socket(socket, topic_id, state))
+    ws.on_upgrade(move |socket| handle_socket(socket, topic_id, user_id, state))
 }
 
 // read messages from the websocket connection and send those messages to the broker
-async fn read(
+async fn read<R: Repository>(
     mut receiver: SplitStream<WebSocket>, 
     sender_broker: Sender<BrokerMessage>,
     tx_ws_lifecycle: OSSender<WebsocketLifecycleEvent>,
     cancel_read_token: CancellationToken,
-    connection_id: String,
+    repo: R,
+    topic_id: Uuid,
+    user_id: Uuid,
 ) {
+    let mut message_offset = 0;
     loop {
         tokio::select! {
             result = receiver.next() => {
                 match result {
                     Some(Ok(Message::Text(payload))) => {
                         let message = BrokerMessage {
-                            connection_id: connection_id.clone(),
+                            source_id: user_id.hyphenated().to_string(),
                             payload: payload.to_string(),
                         };
+                        // TODO: batch write messages as to avoid the round trip time to the database for each keystroke
+                        if let Err(err) = repo.write_message(RepoMessage{ topic_id, user_id, message_offset, content: payload.to_string() }).await {
+                            // TODO: better error handling (retries and eventually socket disconnect or 503 like response)
+                            tracing::error!("failed to write to repository with error: {err}")
+                        };
+                        message_offset += 1;
                         if let Err(_) = sender_broker.send(message) {
                             // receiving an error when trying to send to the broker indicates that 
                             // the broker receiver has been dropped and closed, we should send a 
@@ -98,7 +108,7 @@ async fn write(
     mut receiver_broker: WrappedReceiver<BrokerMessage>,
     mut rx_ws_lifecycle: OSReceiver<WebsocketLifecycleEvent>,
     cancel_read_token: CancellationToken,
-    connection_id: String,
+    user_id: Uuid,
 ) {
     loop {
         // we need to use this tokio select statement to prevent dangling write tasks
@@ -112,7 +122,7 @@ async fn write(
             message = receiver_broker.recv() => {
                 match message {
                     Ok(msg) => {
-                        if msg.connection_id == connection_id {
+                        if *msg.key() == user_id.hyphenated().to_string() {
                             // TODO: check that this does what I think it does, can continue be used
                             //       inside of a tokio select statement
                             continue
@@ -123,7 +133,7 @@ async fn write(
                             // if we fail to send a message to the websocket client, return from the websocket
                             // write handler
                             cancel_read_token.cancel();
-                            return;
+                            return
                         }
                     },
                     Err(RecvError::Closed) => {
@@ -176,13 +186,16 @@ async fn write(
 }
 
 // TODO: parse a 
-async fn handle_socket(socket: WebSocket, topic_id: String, state: AppState) {
-    // generate a unique id for the websocket connection
-    let connection_id = get_id();
+async fn handle_socket<R: Repository>(
+    socket: WebSocket,
+    topic_id: Uuid,
+    user_id: Uuid,
+    state: AppState<R>,
+) {
     // register the websocket connection with the broker
     let (
         sender_broker, receiver_broker
-    ) = state.broker.register(topic_id);
+    ) = state.broker.register(topic_id.to_string());
     // create a oneshot channel that the read task can use to send websocket lifecycle
     // events to the write task
     let (
@@ -197,8 +210,14 @@ async fn handle_socket(socket: WebSocket, topic_id: String, state: AppState) {
     // to send messages from the broker to the client
     let (sender_ws, receiver_ws) = socket.split();
     let mut set = JoinSet::new();
-    set.spawn(read(receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), connection_id.to_string()));
-    set.spawn(write(sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, connection_id.to_string()));
+    // TODO: it would be interesting to see if the compiler will factor the user_id.to_string() call into one call
+    //       that is assigned to a variable and then passed to each of the read and write task
+    set.spawn(read(
+        receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), state.repo, topic_id, user_id,
+    ));
+    set.spawn(write(
+        sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, user_id,
+    ));
     let _ = set.join_all().await;
 
     // TODO: we might want to do some book-keeping when the websocket connection closes

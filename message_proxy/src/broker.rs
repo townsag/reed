@@ -29,14 +29,14 @@ pub trait Routable {
 
 #[derive(Clone,Debug)]
 pub struct BrokerMessage {
-    pub connection_id: String, 
+    pub source_id: String, 
     pub payload: String,
 }
 
 impl Routable for BrokerMessage {
     type Key = String;
     fn key(&self) -> &String {
-        return &self.connection_id;
+        return &self.source_id;
     }
 }
 

@@ -6,7 +6,7 @@ Error};
 
 const MAX_CONNECTIONS: u32 = 10;
 
-async fn build_postgres_pool() -> Result<Pool<Postgres>, Error> {
+pub async fn build_postgres_pool() -> Result<Pool<Postgres>, Error> {
     let options = PgConnectOptions::new()
         .host("localhost")
         .port(5432)

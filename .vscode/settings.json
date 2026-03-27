@@ -32,6 +32,7 @@
     "timestamppb",
     "Timestamptz",
     "townsag",
+    "tungstenite",
     "ywasm"
   ]
 }

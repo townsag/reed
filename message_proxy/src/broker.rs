@@ -8,7 +8,7 @@ use tokio::sync::broadcast::{
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
 use std::collections::HashMap;
-
+use axum::body::Bytes;
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
 // lifetimes would work on that one
@@ -28,9 +28,18 @@ pub trait Routable {
 }
 
 #[derive(Clone,Debug)]
+pub enum Payload {
+    Text(String),
+    // TODO: I don't like the idea of the broker enum depending on an
+    // axum type. There must be some more generic way to represent bytes
+    // that I can use here instead of axum bytes
+    Binary(Bytes)
+}
+
+#[derive(Clone,Debug)]
 pub struct BrokerMessage {
     pub source_id: String, 
-    pub payload: String,
+    pub payload: Payload,
 }
 
 impl Routable for BrokerMessage {

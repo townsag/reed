@@ -26,7 +26,7 @@ use futures_util::{
 };
 use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository, RepoMessage};
-use crate::{AppState, broker::BrokerMessage};
+use crate::{AppState, broker::{BrokerMessage, Payload}};
 
 enum WebsocketLifecycleEvent {
     ClosedByClient,
@@ -57,9 +57,10 @@ async fn read<R: Repository>(
             result = receiver.next() => {
                 match result {
                     Some(Ok(Message::Text(payload))) => {
+                        tracing::debug!("received from user: {} text message: {}", user_id, payload);
                         let message = BrokerMessage {
                             source_id: user_id.hyphenated().to_string(),
-                            payload: payload.to_string(),
+                            payload: Payload::Text(payload.to_string()),
                         };
                         // TODO: batch write messages as to avoid the round trip time to the database for each keystroke
                         if let Err(err) = repo.write_message(RepoMessage{ topic_id, user_id, message_offset, content: payload.to_string() }).await {
@@ -82,6 +83,21 @@ async fn read<R: Repository>(
                         let _ = tx_ws_lifecycle.send(WebsocketLifecycleEvent::ClosedByClient);
                         return
                     },
+                    Some(Ok(Message::Binary(bytes))) => {
+                        tracing::debug!("received from user: {} binary message: {:?}", user_id, bytes);
+                        let message = BrokerMessage {
+                            source_id: user_id.hyphenated().to_string(),
+                            payload: Payload::Binary(bytes),
+                        };
+                        if let Err(_) = sender_broker.send(message) {
+                            // receiving an error when trying to send to the broker indicates that 
+                            // the broker receiver has been dropped and closed, we should send a 
+                            // message indicating that there is an internal error and drop the 
+                            // websocket connection
+                            let _ = tx_ws_lifecycle.send(WebsocketLifecycleEvent::ClosedByServer);
+                            return
+                        }
+                    }
                     Some(Ok(_)) => {
                         // ignore ping, pong, and binary type messages
                     },
@@ -127,9 +143,13 @@ async fn write(
                             //       inside of a tokio select statement
                             continue
                         }
+                        let ws_message = match msg.payload {
+                            Payload::Text(s) => Message::Text(s.into()),
+                            Payload::Binary(b) => Message::Binary(b),
+                        };
                         // TODO: batch read messages from the broker queue, use try receive
                         // TODO: batch send messages, concatenate many broker messages into one ws message
-                        if let Err(_) = sender.send(Message::Text(msg.payload.into())).await {
+                        if let Err(_) = sender.send(ws_message).await {
                             // if we fail to send a message to the websocket client, return from the websocket
                             // write handler
                             cancel_read_token.cancel();

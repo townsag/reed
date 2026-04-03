@@ -1,4 +1,4 @@
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, EventStream};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -6,10 +6,18 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Terminal};
+use yrs::IndexedSequence;
+use core::panic;
 use std::io;
+use std::env;
 use tui_textarea::{Input, Key, TextArea, CursorMove};
 
-use yrs::{Doc, GetString, Text, TextRef, Transact};
+use yrs::{
+    Doc, GetString, Text, TextRef, Transact, Update,
+    updates::decoder::Decode,
+};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 
 struct EditorState<'a> {
     pub textarea: TextArea<'a>,
@@ -67,7 +75,7 @@ impl EditorState<'_> {
         }
         (row, col)
     }
-    fn process_input(&mut self, input: &str) {
+    fn process_input(&mut self, input: &str) -> Vec<u8> {
         // txn holds an immutable borrow to self internally because we don't want to modify the
         // document other than with the txn
         
@@ -90,6 +98,35 @@ impl EditorState<'_> {
         let updated_lines: Vec<&str> = updated_repr.lines().collect();
         let (row, col) = self.offset_to_cursor(offset + 1, &updated_lines);
         self.textarea.move_cursor(CursorMove::Jump(row.try_into().unwrap(), col.try_into().unwrap()));
+        
+        txn.encode_update_v1()
+    }
+    fn process_remote_update(&mut self, update: Update) {
+        let mut txn = self.doc.transact_mut();
+        // record the cursors position before the update
+        let (row, col) = self.textarea.cursor();
+        let text_repr = self.text.get_string(&txn);
+        let lines: Vec<&str> = text_repr.lines().collect();
+        let offset = self.cursor_to_offset(row, col, &lines);
+
+        let pos = self.text.sticky_index(
+            &txn, offset.try_into().unwrap(), yrs::Assoc::Before
+        ).unwrap();
+        
+        // make the update
+        txn.apply_update(update).unwrap();
+        // update the contents of the text area
+        let status_message = self.text.get_string(&txn);
+        self.textarea = TextArea::new(
+            status_message.lines().map(String::from).collect(),
+        );
+        // change the cursors position such that it is still consistent after the update
+        let offset = pos.get_offset(&txn).unwrap();
+        let text_repr = self.text.get_string(&txn);
+        let lines: Vec<&str> = text_repr.lines().collect();
+        let (row, col) = self.offset_to_cursor(offset.index.try_into().unwrap(), &lines);
+        self.textarea.move_cursor(CursorMove::Jump(row.try_into().unwrap(), col.try_into().unwrap()));
+
     }
     fn get_status_message(&self) -> String {
         let txn = self.doc.transact();
@@ -99,7 +136,11 @@ impl EditorState<'_> {
 }
 
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let url = env::args().nth(1).unwrap_or_else(
+        || panic!("this program requires at least one argument")
+    );
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
@@ -109,14 +150,19 @@ fn main() -> io::Result<()> {
     let mut term = Terminal::new(backend)?;
 
     let mut  editor_state = EditorState::new();
+    // create a websocket connection with the update server
+    let (ws_stream, _) = connect_async(&url).await.expect(
+        "failed to connect to websocket server"
+    );
+    let (mut write, mut read) = ws_stream.split();
+    // create a crossterm event stream reader
+    let mut term_reader = EventStream::new();
 
     loop {
         term.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    // Constraint::Min(1),      // textarea takes all available space
-                    // Constraint::Length(3),   // status bar is fixed at 3 rows (border + 1 line)
                     Constraint::Ratio(1, 2),
                     Constraint::Ratio(1, 2),
                 ])
@@ -128,16 +174,42 @@ fn main() -> io::Result<()> {
                 .block(Block::default().borders(Borders::ALL).title("Status"));
             f.render_widget(status, chunks[1]);
         })?;
-        match crossterm::event::read()?.into() {
-            Input { key: Key::Esc, .. } => break,
-            Input { key: Key::Enter, .. } => {
-                editor_state.process_input("\n");
-            },
-            Input { key: Key::Char(c), .. } => {
-                editor_state.process_input(&c.to_string());
+
+        tokio::select! {
+            reader_result = term_reader.next() => {
+                match reader_result {
+                    Some(Ok(event)) => match event.into() {
+                        Input { key: Key::Esc, .. } => break,
+                        Input { key: Key::Enter, ..} => {
+                            let update = editor_state.process_input("\n");
+                            let _ = write.send(Message::Binary(update.into())).await;
+                        },
+                        Input { key: Key::Char(c), .. } => {
+                            let update = editor_state.process_input(&c.to_string());
+                            let _ = write.send(Message::Binary(update.into())).await;
+                        }
+                        input => {
+                            editor_state.textarea.input(input);
+                        },
+                    }
+                    // TODO: handle these cases that take place when there
+                    Some(Err(_)) => {},
+                    None => {},
+                }
             }
-            input => {
-                editor_state.textarea.input(input);
+            // TODO: add a precondition guard that prevents us from reading from this 
+            // stream once the websocket connection has closed
+            ws_result = read.next() => match ws_result {
+                Some(Ok(message)) => {
+                    let data = message.into_data();
+                    if let Ok(update) = Update::decode_v1(&data) {
+                        editor_state.process_remote_update(update);
+                    }
+                },
+                Some(Err(e)) => {
+
+                },
+                None => {},
             }
         }
     }

@@ -4,11 +4,12 @@
 pub mod postgres;
 
 use uuid::Uuid;
-use std::fmt::{Display};
+use std::{collections::HashMap, fmt::Display};
 use trait_variant;
 
 // inspiration for this pattern: 
 // https://doc.rust-lang.org/std/io/struct.Error.html
+#[derive(Debug)]
 pub enum ErrorKind {
     FailedWrite,
     SchemaMismatch,
@@ -25,6 +26,7 @@ impl Display for ErrorKind {
     }
 }
 
+#[derive(Debug)]
 pub struct RepoError {
     pub kind: ErrorKind,
     pub source: Box<dyn std::error::Error>,
@@ -35,6 +37,8 @@ impl Display for RepoError {
         write!(f, "Encountered a Repository Error:\nKind: {}\nSource: {}\n", self.kind, self.source)
     }
 }
+
+impl std::error::Error for RepoError {}
 
 // define a repository interface that can be implemented by repository structs
 // this way the web socket handler code can depend on the repository interface 
@@ -47,6 +51,14 @@ pub struct RepoMessage {
     pub user_id: Uuid,
     pub message_offset: i32,
     pub content: String,
+}
+
+pub struct RepoOperation {
+    pub topic_id: Uuid,
+    pub user_id: Uuid,
+    pub client_id: u64,
+    pub offset: u32,
+    pub payload: Vec<u8>,
 }
 
 // Add these super-traits
@@ -73,7 +85,18 @@ pub trait Repository: Send + Clone + 'static {
     // TODO: look into whether I should use an owned value or a string slice reference when writing to the database
     // https://doc.rust-lang.org/book/ch17-05-traits-for-async.html
     async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;
-    async fn write_messages(&self, messages: Vec<RepoMessage>) -> Result<(), RepoError>; 
+    async fn write_messages(&self, messages: Vec<RepoMessage>) -> Result<(), RepoError>;
+    async fn write_operation(
+        &self, 
+        topic_id: Uuid,
+        user_id: Uuid,
+        client_id: u64,
+        offset: u32,
+        payload: &[u8],
+    ) -> Result<(), RepoError>;
+    // TODO: this looks a bit fishy, a reference to a slice of tuples of references
+    async fn read_operations_after(&self, state_vector: &[(u64, u32)]) -> Result<Vec<Vec<u8>>, RepoError>;
+    async fn read_last_received_offset(&self, client_id: u64) -> Result<u32, RepoError>;
 }
 
 // hopefully when we want to stub out the repository implementation when performing

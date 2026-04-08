@@ -6,6 +6,7 @@ pub mod config {
     pub mod postgres;
 }
 mod repository;
+mod state_machine;
 
 use axum::{
     Router,

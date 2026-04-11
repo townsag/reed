@@ -1,6 +1,5 @@
 use yrs::updates::encoder::Encode;
 use yrs::{Update};
-use yrs::updates::decoder::Decode;
 use yrs::{
     StateVector,
     // encoding::read::Error,
@@ -34,7 +33,7 @@ enum WriterState<R: Repository> {
     AwaitingHandshake{repo: R},
     /// In this state, we know that the client has received all the updates except for recent
     /// in flight updates. Wait for in flight updates so that they can be proxied to the 
-    /// clientac
+    /// client
     HotPath{repo: R},
 }
 */
@@ -51,68 +50,62 @@ struct WriterHotPath {
 }
 impl WriterState for WriterAwaitingHandshake {}
 impl WriterState for WriterHotPath {}
-struct Writer <S: WriterState, R: Repository> {
+pub struct Writer <S: WriterState> {
     topic_id: Uuid,
     user_id: Uuid,
     client_id: u64,
-    repo: R,
     state: S,
     // state: std::marker::PhantomData<S>,
 }
 
-impl<R: Repository> Writer <WriterAwaitingHandshake, R> {
-    fn new(topic_id: Uuid, user_id: Uuid, client_id: u64, repo: R) -> Self {
-        Writer{ topic_id, user_id, client_id, repo, state: WriterAwaitingHandshake }
+impl Writer <WriterAwaitingHandshake> {
+    pub fn new(topic_id: Uuid, user_id: Uuid, client_id: u64) -> Self {
+        Writer{ topic_id, user_id, client_id, state: WriterAwaitingHandshake }
+    }
+    // given the clients version vector, we want to find all of the updates from 
+    // other clients that this client has not received yet
+    pub fn prepare_sync_step_2(
+        self,
+        client_version_vector: StateVector,
+    ) -> Vec<(u64, u32)> {
+        client_version_vector
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect()
     }
     // this function consumes self and returns a new instance of the writer 
     // this client version vector is expected to come from the SyncMessage::SyncStep1 variant. The resulting update is
     // expected to be used to create a SyncMessage::SyncStep2 variant
-    async fn receive_state_vector(
+    pub async fn receive_state_vector(
         self, 
         mut client_version_vector: StateVector,
-        // TODO: should we receive an encoded or decoded state vector here? probably encoded instead
-    ) -> Result<(Writer<WriterHotPath, R>, Vec<u8>), Box<dyn Error>> {
-        // read the missing messages from the database
-        let pairs: Vec<(u64, u32)> = client_version_vector
-            .iter()
-            .map(|(k, v)| {(*k, *v)})
-            .collect();
-        let operations = self.repo.read_operations_after(&pairs).await?;
-        let mut operations_decoded = Vec::<Update>::new();
-        for op in operations {
-            operations_decoded.push(Update::decode_v1(&op)?);
-        }
+        happens_after_updates: Vec<Update>,
+    ) -> (Writer<WriterHotPath>, Update) {
         // construct a bulk update from the missing messages
-        let bulk_update = Update::merge_updates(operations_decoded);
+        let bulk_update = Update::merge_updates(happens_after_updates);
         client_version_vector.merge(bulk_update.state_vector());
         // return the hot path writer and the bulk update message meant to be 
         // sent over the websocket connection
-        Ok((
+        (
             Writer{ 
                 topic_id: self.topic_id,
                 user_id: self.user_id,
                 client_id: self.client_id,
-                repo: self.repo, 
                 state: WriterHotPath { 
                     in_flight_operations_state_vector: client_version_vector,
                 }
             }, 
-            bulk_update.encode_v1(),
-        ))
+            bulk_update,
+        )
     }
 }
-impl<R: Repository> Writer <WriterHotPath, R> {
-    // TODO: implement methods here that are valid only when we are in the hot path state
+impl Writer <WriterHotPath> {
+    // implement methods here that are valid only when we are in the hot path state
     // For now let us have the receive update function return a HotPath writer in all cases
     // this means that we are not detecting silently dropped updates. This will have to be
     // refactored to return an enum of transitions when we want to start detecting silently
     // dropped messages
-    // TODO: this may need to emit errors that cancel the reader
-    fn receive_update(&mut self, update: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
-        // TODO: consider decoding the update elsewhere at a higher level so that we don't 
-        //       have to incur the cost of decoding many times. I think I will make this
-        //       change after I figure out where else we decode
-
+    pub fn receive_update(&mut self, update: Update) -> Update {
         // the purpose of this function is to record internally what the latest operations 
         // the client **has been sent** from the server in the state machine. It does not 
         // perform any mutations on the update
@@ -126,14 +119,13 @@ impl<R: Repository> Writer <WriterHotPath, R> {
         // instead of encoding the state vector from the update then decoding the state vector
         // we should instead decode the update and access the update using update.state_vector()
         // https://docs.rs/yrs/latest/yrs/struct.Update.html#method.state_vector
-        let update_decoded = Update::decode_v1(&update)?;
-        let update_sv = update_decoded.state_vector();
+        let update_sv = update.state_vector();
         self.state.in_flight_operations_state_vector.merge(update_sv);
-        Ok(update)
+        update
     }
     // fn receive_lagged(self) -> Writer<WriterUpdateRecovery, R>
 }
-impl<S: WriterState, R: Repository> Writer <S, R> {
+impl<S: WriterState> Writer <S> {
     // these are methods that are valid on all states
 }
 
@@ -145,7 +137,7 @@ struct ReaderHotPath;
 impl ReaderState for ReaderAwaitingHandshake {}
 impl ReaderState for ReaderHotPath {}
 
-struct Reader <S: ReaderState, R: Repository> {
+pub struct Reader <S: ReaderState, R: Repository> {
     topic_id: Uuid,
     user_id: Uuid,
     client_id: u64,
@@ -154,7 +146,7 @@ struct Reader <S: ReaderState, R: Repository> {
     state: S,
 }
 impl<R: Repository> Reader<ReaderAwaitingHandshake, R> {
-    async fn new(repo: R, topic_id: Uuid, user_id: Uuid, client_id: u64) -> Result<Self, Box<dyn Error>> {
+    pub async fn new(repo: R, topic_id: Uuid, user_id: Uuid, client_id: u64) -> Result<Self, Box<dyn Error>> {
         // read the last received update offset from this client from the database
         let last_received_offset = repo.read_last_received_offset(client_id).await?;
         // create a reader instance and return it
@@ -162,17 +154,25 @@ impl<R: Repository> Reader<ReaderAwaitingHandshake, R> {
             topic_id, user_id, client_id, last_received_offset, repo, state: ReaderAwaitingHandshake,
         })
     }
+    // reader sync step one, send the version vector to the client which encodes all the
+    // updates you expect from the client 
+    pub fn sync_step_one(&self) -> StateVector {
+        let mut empty_sv = StateVector::default();
+        empty_sv.set_max(self.client_id, self.last_received_offset);
+        empty_sv
+    }
     // TODO: may have to change this return error type to be a better error
-    async fn receive_bulk_update(
+    // reader sync step two, receive the bulk update from the client with all the requested
+    // operations
+    pub async fn receive_bulk_update(
         self, 
-        client_bulk_update: Vec<u8>,
-    ) -> Result<(Reader<ReaderHotPath, R>, Vec<u8>), Box<dyn Error>> {
-        let update = Update::decode_v1(&client_bulk_update)?;
-        let new_offset = update.state_vector().get(&self.client_id);
+        client_bulk_update: Update,
+    ) -> Result<(Reader<ReaderHotPath, R>, Update), Box<dyn Error>> {
+        let new_offset = client_bulk_update.state_vector().get(&self.client_id);
         // persist the bulk update that we have received
         self.repo.write_operation(
             self.topic_id, self.user_id, self.client_id,
-            new_offset, &client_bulk_update,
+            new_offset, &client_bulk_update.encode_v1(),
         ).await?;
         // update the last received offset
         // return a hot path reader
@@ -187,12 +187,11 @@ impl<R: Repository> Reader<ReaderAwaitingHandshake, R> {
     }
 }
 impl<R: Repository> Reader<ReaderHotPath, R> {
-    async fn receive_update(&mut self, update: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub async fn receive_update(&mut self, update: Update) -> Result<Update, Box<dyn Error>> {
         // persist the update to the database 
-        let update_decoded = Update::decode_v1(&update)?;
-        let new_offset = update_decoded.state_vector().get(&self.client_id);
+        let new_offset = update.state_vector().get(&self.client_id);
         self.repo.write_operation(
-            self.topic_id, self.user_id, self.client_id, new_offset, &update,
+            self.topic_id, self.user_id, self.client_id, new_offset, &update.encode_v1(),
         ).await?;
         // update the last received offset
         self.last_received_offset = new_offset;
@@ -200,3 +199,18 @@ impl<R: Repository> Reader<ReaderHotPath, R> {
         Ok(update)
     }
 }
+
+
+/*
+Updates:
+- This formulation is okay but it has two issues:
+    - the state machine methods includes serialization and deserialization logic
+    - the state machine methods include persistence logic
+- refactor the state machine implementation so that it only includes handshake
+  state transition logic
+    - violates soc
+    - makes the transition logic messy because every method has to return a 
+      result type
+    - incurs extra serialization and deserialization logic 
+        - we should deserialize and serialize at the application boundary 
+*/

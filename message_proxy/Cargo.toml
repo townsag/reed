@@ -10,6 +10,7 @@ futures-channel = "0.3.32"
 futures-util = "0.3.32"
 ratatui = "0.29.0"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "uuid"] }
+thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-tungstenite = "0.29.0"
 tokio-util = "0.7.18"

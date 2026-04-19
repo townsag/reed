@@ -77,6 +77,22 @@
         - the client sends a bulk update of all the operations with a happens after relationship relative to the last seen offset by the server
             - the client bulk update can be empty
         - client switches to hot path
+- [ ] database changes:
+    - [ ] add the idea of migrations to the message proxy service
+        - this allows us to perform these migrations as part of integration tests
+        - https://docs.rs/sqlx/latest/sqlx/migrate/trait.MigrationSource.html
+        - you can run migrations using this pattern
+        ```bash
+        sqlx migrate info
+        ```
+        - you can populate the cache of sqlx table shapes using
+        ```bash
+        cargo sqlx prepare
+        ```
+        - then change the env variable that indicates we should use offline mode
+    - tests are run in their own isolated database, that is why we use the migrations. This allows tests to use the database schema as well as be independent
+
+
 - Resources:
     - y-protocol documentation and implementation
         - https://docs.rs/yrs/latest/yrs/sync/protocol/index.html

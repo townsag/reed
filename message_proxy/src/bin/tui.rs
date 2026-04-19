@@ -6,18 +6,20 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Terminal};
-use yrs::IndexedSequence;
+use yrs::updates::encoder::Encode;
+use yrs::{IndexedSequence, ReadTxn};
 use core::panic;
 use std::io;
 use std::env;
 use tui_textarea::{Input, Key, TextArea, CursorMove};
 
 use yrs::{
-    Doc, GetString, Text, TextRef, Transact, Update,
+    Doc, GetString, Text, TextRef, Transact, Update, StateVector,
     updates::decoder::Decode,
+    sync::protocol::{SyncMessage},
 };
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{FutureExt, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 
 struct EditorState<'a> {
     pub textarea: TextArea<'a>,
@@ -101,6 +103,34 @@ impl EditorState<'_> {
         
         txn.encode_update_v1()
     }
+    // receive a message from the server with all the updates that the server has but the
+    // client does not have 
+    fn process_remote_sync_step_2(&mut self, update: Update) {
+        // apply the remote update to the local document state
+        self.doc.transact_mut().apply_update(update).unwrap();
+    }
+    // receive a message from the server that indicates which operations the client 
+    // has already sent to the server. Respond to this message with all the updates that
+    // have a happens-after relationship with the servers state vector
+    fn process_remote_sync_step_1(&self, remote_state_vector: StateVector) -> SyncMessage {
+        // find the updates that have been made by this client specifically in the local 
+        // document state that have a happens after relationship with the state vector 
+        // sent by the server
+        // this is a bit hacky, get a state vector for the local state then use in place 
+        // updates to make it as if that state vector had the operation offset that the
+        // server has for this client
+        let mut sv = self.doc.transact().state_vector();
+        let local_client_id = self.doc.client_id();
+        let remote_offset = remote_state_vector.get(&local_client_id);
+        // TODO: we may have to take care of the zero case here in the case where the remote
+        // has seen none of the operations of this client_id, and the zero value in the 
+        // version vector corresponds to an operation. We may miss the 0th operation
+        sv.set_min(local_client_id, remote_offset);
+        // then get the updates with a happens after relationship to the modified state
+        // vector
+        let client_sync_step_2 = SyncMessage::SyncStep2(self.doc.transact().encode_diff_v1(&sv));
+        client_sync_step_2
+    }
     fn process_remote_update(&mut self, update: Update) {
         let mut txn = self.doc.transact_mut();
         // record the cursors position before the update
@@ -137,7 +167,7 @@ impl EditorState<'_> {
 
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = env::args().nth(1).unwrap_or_else(
         || panic!("this program requires at least one argument")
     );
@@ -182,11 +212,11 @@ async fn main() -> io::Result<()> {
                         Input { key: Key::Esc, .. } => break,
                         Input { key: Key::Enter, ..} => {
                             let update = editor_state.process_input("\n");
-                            let _ = write.send(Message::Binary(update.into())).await;
+                            write.send(Message::Binary(update.into())).await?;
                         },
                         Input { key: Key::Char(c), .. } => {
                             let update = editor_state.process_input(&c.to_string());
-                            let _ = write.send(Message::Binary(update.into())).await;
+                            write.send(Message::Binary(update.into())).await?;
                         }
                         input => {
                             editor_state.textarea.input(input);
@@ -200,15 +230,26 @@ async fn main() -> io::Result<()> {
             // TODO: add a precondition guard that prevents us from reading from this 
             // stream once the websocket connection has closed
             ws_result = read.next() => match ws_result {
+                // TODO: update this code to parse websocket sync message types
                 Some(Ok(message)) => {
                     let data = message.into_data();
-                    if let Ok(update) = Update::decode_v1(&data) {
-                        editor_state.process_remote_update(update);
-                    }
+                    match SyncMessage::decode_v1(&data) {
+                        Ok(SyncMessage::SyncStep1(state_vector)) => {
+                            let response = editor_state.process_remote_sync_step_1(state_vector);
+                            write.send(Message::Binary(response.encode_v1().into())).await?;
+                        },
+                        Ok(SyncMessage::SyncStep2(encoded_update)) => {
+                            let decoded_update = Update::decode_v1(&encoded_update)?;
+                            editor_state.process_remote_sync_step_2(decoded_update);
+                        },
+                        Ok(SyncMessage::Update(encoded_update)) => {
+                            let decoded_update = Update::decode_v1(&encoded_update)?;
+                            editor_state.process_remote_update(decoded_update);
+                        },
+                        Err(_) => {},
+                    };
                 },
-                Some(Err(e)) => {
-
-                },
+                Some(Err(_)) => {},
                 None => {},
             }
         }

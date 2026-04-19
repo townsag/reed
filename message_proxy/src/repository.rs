@@ -4,7 +4,7 @@
 pub mod postgres;
 
 use uuid::Uuid;
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 use trait_variant;
 
 // inspiration for this pattern: 
@@ -29,7 +29,9 @@ impl Display for ErrorKind {
 #[derive(Debug)]
 pub struct RepoError {
     pub kind: ErrorKind,
-    pub source: Box<dyn std::error::Error>,
+    // TODO: read this part of the rust book again and describe why this 
+    // needs both the send and the sync bound
+    pub source: Box<dyn std::error::Error + Send + Sync>,
 }
 
 impl Display for RepoError {
@@ -46,20 +48,20 @@ impl std::error::Error for RepoError {}
 
 // define domain models at the repository interface level, this way they can be shared
 // between repository implementations
-pub struct RepoMessage {
-    pub topic_id: Uuid,
-    pub user_id: Uuid,
-    pub message_offset: i32,
-    pub content: String,
-}
+// pub struct RepoMessage {
+//     pub topic_id: Uuid,
+//     pub user_id: Uuid,
+//     pub message_offset: i32,
+//     pub content: String,
+// }
 
-pub struct RepoOperation {
-    pub topic_id: Uuid,
-    pub user_id: Uuid,
-    pub client_id: u64,
-    pub offset: u32,
-    pub payload: Vec<u8>,
-}
+// pub struct RepoOperation {
+//     pub topic_id: Uuid,
+//     pub user_id: Uuid,
+//     pub client_id: u64,
+//     pub offset: u32,
+//     pub payload: Vec<u8>,
+// }
 
 // Add these super-traits
 // Send: the repository needs to be able to move between threads, this is required by the tokio runtime
@@ -84,8 +86,7 @@ pub struct RepoOperation {
 pub trait Repository: Send + Clone + 'static {
     // TODO: look into whether I should use an owned value or a string slice reference when writing to the database
     // https://doc.rust-lang.org/book/ch17-05-traits-for-async.html
-    async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;
-    async fn write_messages(&self, messages: Vec<RepoMessage>) -> Result<(), RepoError>;
+    // async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;
     async fn write_operation(
         &self, 
         topic_id: Uuid,
@@ -94,9 +95,8 @@ pub trait Repository: Send + Clone + 'static {
         offset: u32,
         payload: &[u8],
     ) -> Result<(), RepoError>;
-    // TODO: this looks a bit fishy, a reference to a slice of tuples of references
-    async fn read_operations_after(&self, state_vector: &[(u64, u32)]) -> Result<Vec<Vec<u8>>, RepoError>;
-    async fn read_last_received_offset(&self, client_id: u64) -> Result<u32, RepoError>;
+    async fn read_operations_after(&self, state_vector: &[(u64, u32)], topic_id: Uuid) -> Result<Vec<Vec<u8>>, RepoError>;
+    async fn read_last_received_offset(&self, client_id: u64) -> Result<Option<u32>, RepoError>;
 }
 
 // hopefully when we want to stub out the repository implementation when performing

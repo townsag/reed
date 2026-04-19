@@ -1,9 +1,13 @@
 // use std::error::Error;
 // option tab is the command to prompt VSCode to suggest symbols
 use tokio::sync::broadcast::{
-    Sender, 
+    Sender as BCSender, 
     error::RecvError,
 };
+use tokio::sync::mpsc::{
+    self, Receiver as MPSCReceiver, Sender as MPSCSender
+};
+use yrs::updates::encoder::Encode;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -32,22 +36,21 @@ use yrs::{
     updates::decoder::Decode, 
 };
 use crate::broker::{Routable, WrappedReceiver};
-use crate::repository::{Repository, RepoMessage};
-use crate::broker::{BrokerMessage, Payload};
+use crate::repository::{Repository, RepoError};
 use crate::AppState;
 use crate::state_machine::{Reader,  Writer};
+use thiserror::Error;
 
 enum ReaderEvent {
     ClosedByClient,
     ClosedByServer,
-    ClientSyncStep1(StateVector),
-    ServerSyncStep2(Update),
+    ClientSyncStep1(Vec<u8>),
 }
 
 #[derive(Clone)]
 pub struct UpdateMessage {
     client_id: u64,
-    payload: Arc<Update>,
+    payload: Arc<Vec<u8>>,
 }
 
 impl Routable for UpdateMessage {
@@ -55,6 +58,13 @@ impl Routable for UpdateMessage {
     fn key(&self) -> &Self::Key {
         return &self.client_id;
     }
+}
+
+#[derive(Clone)]
+struct SessionContext {
+    topic_id: Uuid,
+    user_id: Uuid,
+    client_id: u64,
 }
 
 pub async fn handler<R: Repository>(
@@ -66,10 +76,18 @@ pub async fn handler<R: Repository>(
     ws.on_upgrade(move |socket| handle_socket(socket, topic_id, user_id, client_id, state))
 }
 
-fn decode_helper(
+enum Decoded {
+    // TODO: if we find that the cost of encoding and decoding is too expensive we should find
+    // an alternative pattern
+    Valid(SyncMessage),
+    Skip,
+    Failure,
+}
+
+async fn decode_helper(
     result: Option<Result<Message, Error>>, 
-    tx_ws_lifecycle: Sender<ReaderEvent>,
-) -> Option<SyncMessage> {
+    tx_ws_lifecycle: &MPSCSender<ReaderEvent>,
+) -> Decoded {
     /*
     This result can be one of these things:
     - Binary websocket message
@@ -87,11 +105,23 @@ fn decode_helper(
         - when we get these we want to indicate to the writer that the websocket connection is closing
     */
     match result {
-        Some(Ok(Message::Binary(bytes))) => SyncMessage::decode_v1(&bytes).ok(),
-        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => { tx_ws_lifecycle.send(ReaderEvent::ClosedByServer); None },
+        Some(Ok(Message::Binary(bytes))) => {
+            match SyncMessage::decode_v1(&bytes) {
+                Ok(sync_message) => Decoded::Valid(sync_message),
+                Err(_) => Decoded::Skip,
+            }
+        },
+        Some(Ok(Message::Close(_))) | None => {
+            let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByClient).await;
+            Decoded::Failure
+        },
+        Some(Err(_)) => {
+            let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer).await;
+            Decoded::Failure
+        },
         // TODO: this will not work, we need some way to indicate that we should skip this message
         // right now we can only indicate use this message or close the websocket connection
-        Some(Ok(_)) => None,
+        Some(Ok(_)) => Decoded::Skip,
     }
 
 }
@@ -99,94 +129,66 @@ fn decode_helper(
 // read messages from the websocket connection and send those messages to the broker
 async fn read<R: Repository>(
     mut receiver: SplitStream<WebSocket>, 
-    sender_broker: Sender<UpdateMessage>,
-    tx_ws_lifecycle: Sender<ReaderEvent>,
-    cancel_read_token: CancellationToken,
+    sender_broker: BCSender<UpdateMessage>,
+    tx_ws_lifecycle: MPSCSender<ReaderEvent>,
     repo: R,
-    topic_id: Uuid,
-    user_id: Uuid,
-    client_id: u64,
-) {
-    // create an instance of the reader state
-    let reader =  match Reader::new(repo, topic_id, user_id, client_id).await {
-        Ok(reader) => reader,
-        Err(e ) => {
-            tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-            return;
-        },
+    session_context: SessionContext,
+    cancel_read_token: CancellationToken,
+) -> Result<(), TaskError> {
+    let Ok(mut _last_received_offset) = repo.read_last_received_offset(session_context.client_id).await else {
+        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer).await;
+        return Ok(());
     };
+    let mut _last_received_offset = _last_received_offset.unwrap_or(0);
     // send a message to the client indicating what updates we have already so that the client can send us
     // a bulk update of messages that we are missing 
-    let reader_sv = reader.sync_step_one();
-    tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(reader_sv));
+    let mut reader_sv = StateVector::default();
+    reader_sv.set_max(session_context.client_id, _last_received_offset);
+    let encoded_state_vector = reader_sv.encode_v1();
+    tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(encoded_state_vector)).await?;
 
     // expect the client to send us a sync step one message including their version vector
     // or a sync step two message including the local updates that the server does not yet have
-    let mut reader = loop {
+    _last_received_offset = loop {
         tokio::select! {
-            result = receiver.next() => {
-                match result {
-                    Some(Ok(Message::Binary(bytes))) => {
-                        // decode the sync message
-                        match SyncMessage::decode_v1(&bytes) {
-                            Ok(SyncMessage::SyncStep1(sv)) => {
-                                // if it is a sync step one message, forward it to the writer
-                                // TODO: may need some error handling code here in the case that 
-                                // the client receiver has already been dropped
-                                tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(sv));
-                            },
-                            Ok(SyncMessage::SyncStep2(encoded_bulk_update)) => {
-                                // if it is a sync step two message, process it at the reader then break
-                                let bulk_update = match Update::decode_v1(&encoded_bulk_update) {
-                                    Ok(update) => update,
-                                    // TODO: log the error here so that we know when we receive bad
-                                    // messages
-                                    Err(e) => { continue; }
-                                };
-                                let (reader, bulk_update) = match reader.receive_bulk_update(bulk_update).await {
-                                    Ok((r, u)) => (r, u),
-                                    Err(_) => {
-                                        tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-                                        return
-                                    }
-                                };
-                                // write the bulk update to the broadcast channel
-                                let update_message = UpdateMessage{
-                                    client_id, payload: Arc::new(bulk_update),
-                                };
-                                if let Err(_ )= sender_broker.send(update_message) {
-                                    let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-                                    return
-                                }
-                                break reader
-                            },
-                            // if it is an update message, reject it
-                            Ok(SyncMessage::Update(_)) => {},
-                            Err(e) => {
-                                tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-                                return
-                            }
-                        };
+            result = receiver.next() => match decode_helper(result, &tx_ws_lifecycle).await {
+                Decoded::Valid(SyncMessage::SyncStep1(sv)) => {
+                    // sync step one messages get processed by the writer
+                    // TODO: may need some error handling code here in the case that 
+                    // the client receiver has already been dropped
+                    tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(sv.encode_v1())).await?;
+                },
+                Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update)) => {
+                    // if it is a sync step two message, process it at the reader then break
+                    let new_offset = {
+                        let client_bulk_update = Update::decode_v1(&encoded_bulk_update)?;
+                        client_bulk_update.state_vector().get(&session_context.client_id)
+                    };
+                    // decoded Updates cannot be held across await boundaries because it is not send
+                    // when possible, we need to drop the update before an await boundary
+                    if let Err(_) = repo.write_operation(session_context.topic_id, session_context.user_id, session_context.client_id, new_offset, &encoded_bulk_update).await {
+                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer).await;
+                        return Ok(())
+                    };
+                    // write the bulk update to the broadcast channel
+                    let update_message = UpdateMessage{
+                        client_id: session_context.client_id, payload: Arc::new(encoded_bulk_update),
+                    };
+                    if let Err(_ )= sender_broker.send(update_message) {
+                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer).await;
+                        return Ok(())
                     }
-                    Some(Ok(Message::Close(_close_frame))) => {
-                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByClient);
-                        return
-                    },
-                    // ignore Text, Ping, and Pong type messages
-                    Some(Ok(_)) => {},
-                    // ignore errors for now, these will be the messages that made it over the network
-                    // but were lost at the OS level because of buffer overflow
-                    // probably just close the websocket connection here so that it will be recreated
-                    // on a server with less load and lost messages will be recovered in state handshake
-                    Some(Err(e)) => {}
-                    None => {
-                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByClient);
-                        return
-                    }
+                    break new_offset
+                },
+                // if it is an update message, skip it
+                Decoded::Valid(SyncMessage::Update(_)) => {},
+                Decoded::Skip => {},
+                Decoded::Failure => { 
+                    return Ok(()); 
                 }
-            }
+            },
             _ = cancel_read_token.cancelled() => {
-                return;
+                return Ok(());
             }
         }
     };
@@ -194,80 +196,107 @@ async fn read<R: Repository>(
     // enter the hot path
     loop {
         tokio::select! {
-            result = receiver.next() => {
-                match result {
-                    Some(Ok(Message::Binary(bytes))) => {
-                        // decode the sync message
-                        match SyncMessage::decode_v1(&bytes) {
-                            Ok(SyncMessage::SyncStep1(sv)) => {
-                                // if it is a sync step one message, forward it to the writer
-                                // TODO: may need some error handling code here in the case that 
-                                // the client receiver has already been dropped
-                                tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(sv));
-                            },
-                            Ok(SyncMessage::SyncStep2(_encoded_bulk_update)) => {
-                                // if it is a sync step two message, ignore it
-                            },
-                            Ok(SyncMessage::Update(encoded_update)) => {
-                                // if it is an update message, process it with the reader then forward
-                                // it to other connected clients using the broker
-                                let mut update = match Update::decode_v1(&encoded_update) {
-                                    Ok(update) => update,
-                                    Err(a) => { return },
-                                };
-                                update = match reader.receive_update(update).await {
-                                    Ok(update) => update,
-                                    Err(e) => { return }
-                                };
-                                let message = UpdateMessage {
-                                    client_id,
-                                    payload: Arc::new(update),
-                                };
-                                if let Err(_) = sender_broker.send(message) {
-                                    tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-                                    return
-                                }
-                            },
-                            Err(e) => {
-                                tx_ws_lifecycle.send(ReaderEvent::ClosedByServer);
-                                return
-                            }
-                        };
+            result = receiver.next() => match decode_helper(result, &tx_ws_lifecycle).await {
+                Decoded::Valid(SyncMessage::SyncStep1(sv)) => {
+                    // sync step one messages get processed by the writer
+                    // TODO: may need some error handling code here in the case that 
+                    // the client receiver has already been dropped
+                    let _ = tx_ws_lifecycle.send(ReaderEvent::ClientSyncStep1(sv.encode_v1())).await;
+                },
+                Decoded::Valid(SyncMessage::SyncStep2(_)) => { /* if it is a sync step two message, ignore it */ },
+                // if it is an update message, skip it
+                Decoded::Valid(SyncMessage::Update(encoded_update)) => {
+                    // if it is an update message, process it with the reader then forward
+                    // it to other connected clients using the broker
+                    let new_offset = {
+                        let update = Update::decode_v1(&encoded_update)?;
+                        update.state_vector().get(&session_context.client_id)
+                    };
+                    if let Err(_) = repo.write_operation(session_context.topic_id, session_context.user_id, session_context.client_id, new_offset, &encoded_update).await {
+                        return Ok(());
+                    };
+                    _last_received_offset = new_offset;
+                    let message = UpdateMessage { client_id: session_context.client_id, payload: Arc::new(encoded_update) };
+                    if let Err(_) = sender_broker.send(message) {
+                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByServer).await;
+                        return Ok(());
                     }
-                    Some(Ok(Message::Close(_close_frame))) => {
-                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByClient);
-                        return
-                    },
-                    // ignore Text, Ping, and Pong type messages
-                    Some(Ok(_)) => {},
-                    // ignore errors for now, these will be the messages that made it over the network
-                    // but were lost at the OS level because of buffer overflow
-                    // probably just close the websocket connection here so that it will be recreated
-                    // on a server with less load and lost messages will be recovered in state handshake
-                    Some(Err(e)) => {}
-                    None => {
-                        let _ = tx_ws_lifecycle.send(ReaderEvent::ClosedByClient);
-                        return
-                    }
-                }
-            }
+                },
+                Decoded::Skip => {},
+                Decoded::Failure => { return Ok(()); }
+            },
             _ = cancel_read_token.cancelled() => {
-                return;
+                return Ok(());
             }
         }
     }
 }
 
+#[derive(Error, Debug)]
+pub enum TaskError {
+    #[error("failed to decode")]
+    DecodeError(#[from] yrs::encoding::read::Error),
+    // TODO: make this more precise
+    #[error("failed to perform repository operation")]
+    PersistenceError(#[from] RepoError),
+    #[error("failed to send ws message")]
+    WSWriteMessage(#[from] axum::Error),
+    #[error("failed to receive from the broker")]
+    BrokerReceiveError(#[from] tokio::sync::broadcast::error::RecvError),
+    #[error("failed to send a message from the reader to the write")]
+    ReaderToWriterSendError(#[from] tokio::sync::mpsc::error::SendError<ReaderEvent>),
+}
+
 // receive messages from the broker and send them to the websocket connection
-async fn write(
+async fn write<R: Repository>(
     mut sender: SplitSink<WebSocket, Message>, 
-    mut receiver_broker: WrappedReceiver<BrokerMessage>,
-    mut rx_ws_lifecycle: OSReceiver<WebsocketLifecycleEvent>,
-    cancel_read_token: CancellationToken,
-    user_id: Uuid,
-    client_id: u64,
-) {
+    mut receiver_broker: WrappedReceiver<Uuid, UpdateMessage>,
+    mut rx_ws_lifecycle: MPSCReceiver<ReaderEvent>,
+    repo: R,
+    session_context: SessionContext,
+) -> Result<(), TaskError> {
     // create an instance of the writer state
+    let writer = Writer::new(
+        session_context.topic_id, session_context.user_id, session_context.client_id
+    );
+    // while in the writer awaiting handshake state, we can only receive state vector messages from the 
+    // client indicating the messages that the client has already received. Only then can we start 
+    // sending the client update messages
+    let (writer , bulk_update) = loop {
+        match rx_ws_lifecycle.recv().await {
+            Some(ReaderEvent::ClientSyncStep1(encoded_sv)) => {
+                let pairs = {
+                    let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+                    writer.prepare_sync_step_2(client_state_vector)
+                };
+                let happens_after_updates = repo.read_operations_after(
+                    &pairs, session_context.topic_id,
+                ).await?;
+                let mut decoded_updates = Vec::<Update>::new();
+                for encoded_update in happens_after_updates {
+                    decoded_updates.push(Update::decode_v1(&encoded_update)?)
+                }
+                let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+                let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
+                    client_state_vector, decoded_updates
+                );
+                break (hot_path_writer, decoded_bulk_update.encode_v1())
+            },
+            Some(ReaderEvent::ClosedByClient) => { 
+                return Ok(()); 
+            },
+            Some(ReaderEvent::ClosedByServer) | None => {
+                let _ = sender.send(Message::Close(Some(
+                    CloseFrame { code: 1011, reason: "internal server error".into()},
+                )));
+                return Ok(());
+            },
+        }
+    };
+    // send the bulk update over the websocket connection
+    let ws_message = Message::Binary(SyncMessage::SyncStep2(bulk_update).encode_v1().into());
+    sender.send(ws_message).await?;
+
     loop {
         // we need to use this tokio select statement to prevent dangling write tasks
         // in the case that the websocket disconnects, the write task may not know that 
@@ -280,33 +309,24 @@ async fn write(
             message = receiver_broker.recv() => {
                 match message {
                     Ok(msg) => {
-                        if *msg.key() == user_id.hyphenated().to_string() {
+                        if *msg.key() == session_context.client_id {
                             // TODO: how come hyphenated does not consume self?
                             // TODO: check that this does what I think it does, can continue be used
                             //       inside of a tokio select statement
                             continue
                         }
-                        let ws_message = match msg.payload {
-                            Payload::Text(s) => Message::Text(s.into()),
-                            Payload::Binary(b) => Message::Binary(b),
-                        };
+                        let ws_message = Message::Binary(SyncMessage::Update(msg.payload.to_vec()).encode_v1().into());
                         // TODO: batch read messages from the broker queue, use try receive
                         // TODO: batch send messages, concatenate many broker messages into one ws message
-                        if let Err(_) = sender.send(ws_message).await {
-                            // if we fail to send a message to the websocket client, return from the websocket
-                            // write handler
-                            cancel_read_token.cancel();
-                            return
-                        }
+                        sender.send(ws_message).await?;
                     },
-                    Err(RecvError::Closed) => {
+                    Err(e @ RecvError::Closed) => {
                         // handle closure of the receiver from the broker
                         // this is an unrecoverable internal server error, we should close the connection
                         let _ = sender.send(Message::Close(Some(
                             CloseFrame { code: 1011, reason: "internal server error".into()},
                         )));
-                        cancel_read_token.cancel();
-                        return
+                        return Err(TaskError::BrokerReceiveError(e));
                     },
                     Err(RecvError::Lagged(_)) => {
                         // TODO: this is the case in which we missed some messages sent to this topic
@@ -317,30 +337,21 @@ async fn write(
             }
             // use a mutable reference to the oneshot channel because otherwise each loop
             // would consume the channel
-            ws_lifecycle_message = &mut rx_ws_lifecycle => {
+            ws_lifecycle_message = rx_ws_lifecycle.recv() => {
                 match ws_lifecycle_message {
-                    // upon receiving a oneshot message that says message closed by the server
+                    Some(ReaderEvent::ClientSyncStep1(_)) => {},
+                    // upon receiving a message that says message closed by the server
                     // we should send a closing frame and then close the connection
-                    Ok(WebsocketLifecycleEvent::ClosedByClient) => {
+                    Some(ReaderEvent::ClosedByClient) => {
                         // do nothing, the connection is already closed...
-                        return
+                        return Ok(());
                     },
-                    Ok(WebsocketLifecycleEvent::ClosedByServer) => {
+                    Some(ReaderEvent::ClosedByServer) | None => {
                         // send a close frame over the websocket connection
                         let _ = sender.send(Message::Close(Some(
                             CloseFrame { code: 1011, reason: "internal server error".into()
                         })));
-                        return
-                    },
-                    Err(_e) => {
-                        // error indicates that the oneshot channel sender has been dropped
-                        // this means that the task associated with reading from the websocket
-                        // has stopped
-                        // attempt to send a closing frame if possible
-                        let _ = sender.send(Message::Close(Some(
-                            CloseFrame { code: 1011, reason: "internal server error".into()
-                        })));
-                        return
+                        return Ok(());
                     },
                 }
             }
@@ -359,16 +370,17 @@ async fn handle_socket<R: Repository>(
     // register the websocket connection with the broker
     let (
         sender_broker, receiver_broker
-    ) = state.broker.register(topic_id.to_string());
+    ) = state.broker.register(topic_id);
     // create a oneshot channel that the read task can use to send websocket lifecycle
     // events to the write task
     let (
         tx_ws_lifecycle, rx_ws_lifecycle
-    ) = oneshot::channel();
+    ) = mpsc::channel(5);
     // create a cancellation token that write task can use to signal to the read task that 
     // it should shut down. We use a cancellation token here instead of a channel because 
     // we do not need to communicate the reason for cancellation
     let cancel_read_token = CancellationToken::new();
+    let session_context = SessionContext{ topic_id, user_id, client_id };
     // split the websocket into a message sender and a message receiver task
     // we will use the receiver to send messages from the client to the broker and the sender 
     // to send messages from the broker to the client
@@ -376,15 +388,47 @@ async fn handle_socket<R: Repository>(
     let mut set = JoinSet::new();
     // TODO: it would be interesting to see if the compiler will factor the user_id.to_string() call into one call
     //       that is assigned to a variable and then passed to each of the read and write task
+    // TODO: refactor the read function to return a Result type instead of nothing, this will simplify
+    // much of the error handling inside of the read function
     set.spawn(read(
-        receiver_ws, sender_broker, tx_ws_lifecycle, cancel_read_token.clone(), state.repo, topic_id, user_id, client_id,
+        receiver_ws, sender_broker, tx_ws_lifecycle, state.repo.clone(), session_context.clone(), cancel_read_token.clone(),
     ));
     set.spawn(write(
-        sender_ws, receiver_broker, rx_ws_lifecycle, cancel_read_token, user_id, client_id,
+        sender_ws, receiver_broker, rx_ws_lifecycle, state.repo, session_context,
     ));
-    let _ = set.join_all().await;
+    while let Some(_) = set.join_next().await {
+        // TODO: this is messy, we are not yet sure which task is returning this error
+        // so we could be calling cancel on the token after the read task has already returned 
+        cancel_read_token.cancel();
+    }
 
     // TODO: we might want to do some book-keeping when the websocket connection closes
     //       return some sort of error value from the read and write tasks and use that 
     //       for book keeping
 }
+
+
+/*
+Refactors:
+- update the implementation so that the channel between the reader and the writer has just
+  one purpose instead of two purposes 
+- pull the triggering of the cancellation read token out of the writer and into handle socket
+    - write should return an error and handle socket should cancel the read task depending on
+      the error
+
+Technical Requirement:
+- we need to indicate to the client that the server will be closing the connection
+- if the read task fails, we want the write task to stop too
+    - there should be a message indicating that the connection is being closed by the server
+- if the write task fails, we want the read task to close too
+    - there will not be a message indicating that the server is closing the connection 
+      because the write task has failed
+
+- approach:
+    - refactor the read task so that connection lifecycle information is no longer 
+      included in the events that can be sent over the channel 
+        - the channel should only be for 
+    - refactor the read task to get connection lifecycle information from the 
+      cancellation token instead of the channel
+    
+*/

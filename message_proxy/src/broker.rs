@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::broadcast::{
     self, Receiver, Sender, error::RecvError,
 };
+use uuid::Uuid;
 // use the std implementation of Mutex because we don't have to hold the lock across await points
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
@@ -22,6 +23,10 @@ use axum::body::Bytes;
 
 const BUFFER_SIZE: usize = 100;
 
+pub trait Key: Eq + Hash + Clone + Debug {}
+
+impl Key for Uuid {}
+
 pub trait Routable {
     type Key: Eq + Hash + Clone + Debug;
     fn key(&self) -> &Self::Key;
@@ -33,7 +38,7 @@ pub enum Payload {
     // TODO: I don't like the idea of the broker enum depending on an
     // axum type. There must be some more generic way to represent bytes
     // that I can use here instead of axum bytes
-    Binary(Bytes)
+    Binary(Bytes),
 }
 
 #[derive(Clone,Debug)]
@@ -64,10 +69,10 @@ impl BrokerBuilder {
         self
     }
 
-    pub fn build<M: Routable + Clone>(self) -> Broker<M> {
+    pub fn build<TopicId: Key, M: Routable + Clone>(self) -> Broker<TopicId, M> {
         Broker{
             topics: Arc::new(Mutex::new(
-                HashMap::<M::Key, Sender<M>>::new()
+                HashMap::<TopicId, Sender<M>>::new()
             )),
             buffer_size: self.buffer_size,
         }
@@ -80,14 +85,14 @@ impl Default for BrokerBuilder {
     }
 }
 
-pub struct WrappedReceiver<M: Routable + Clone> {
-    topic_id: M::Key,
+pub struct WrappedReceiver<TopicId: Key, M: Routable + Clone> {
+    topic_id: TopicId,
     // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
     receiver: Receiver<M>,
-    topics: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
+    topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
 }
 
-impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
+impl<TopicId: Key, M: Routable + Clone> Drop for WrappedReceiver<TopicId, M> {
     fn drop(&mut self) {
         // upon this receiver going out of scope, we need to check if there are any remaining
         // receivers open for this topic (other than this receiver) and delete the topic from
@@ -106,7 +111,7 @@ impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
     }
 }
 
-impl<M: Routable + Clone> WrappedReceiver<M> {
+impl<TopicId: Key, M: Routable + Clone> WrappedReceiver<TopicId, M> {
     // implementing the recv function on the wrapped receiver and making the underlying receiver
     // private means that clients can receive from the broadcast channel without being able to
     // clone the broadcast channel. This is important because we cleanup the topic from the topic
@@ -118,22 +123,23 @@ impl<M: Routable + Clone> WrappedReceiver<M> {
     }
 }
 
-
+// update the broker implementation so that they key used to identify 
+// topics may be a different type than the key used to identify clients
 #[derive(Clone)]
-pub struct Broker<M: Routable + Clone> {
+pub struct Broker<TopicId: Key, M: Routable + Clone> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<M::Key, Sender<M>>>>,
+    topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
     buffer_size: usize,
 }
 
-impl<M: Routable + Clone> Broker<M> {
+impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
     // method that can be used by a websocket client to subscribe to a topic in the broker
     // pub fn subscribe(&self, topic_id: M::Key) -> Subscription<M> {
         
     // }
 
-    
-    pub fn register(&self, topic_id: M::Key) -> (Sender<M>, WrappedReceiver<M>) {
+    // TODO: may have to update this so that topic_id and client_id are two different key types
+    pub fn register(&self, topic_id: TopicId) -> (Sender<M>, WrappedReceiver<TopicId, M>) {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
         let mut topics= self.topics.lock().unwrap();
         // TODO: ^this should not panic, come back to this when I understand errors well enough

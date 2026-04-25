@@ -1,0 +1,34 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "run tui",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceRoot}/message_proxy/target/debug/tui",
+            "args": ["ws://localhost:3000/ws/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000001?client_id=1"],
+            "stdio": [null, null, "${workspaceRoot}/message_proxy/error.log"],
+            "cwd": "${workspaceRoot}"
+        },
+        {
+            "name": "run message proxy",
+            "type": "lldb",
+            "request": "launch",
+            // cargo is a sub-process that is started by the debugger
+            // it does not use the "cwd" field. It's purpose is to create a
+            // binary that can be launched by the debugger. The "cwd" field
+            // is for running the launched binary
+            "cargo": {
+                "args": [
+                    "build", 
+                    "--bin=message_proxy",
+                    "--manifest-path=${workspaceFolder}/message_proxy/Cargo.toml"
+                ],
+            },
+            "cwd": "${workspaceFolder}/message_proxy",
+        },
+    ]
+}

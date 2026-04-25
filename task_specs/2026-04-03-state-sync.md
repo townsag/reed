@@ -91,7 +91,7 @@
         ```
         - then change the env variable that indicates we should use offline mode
     - tests are run in their own isolated database, that is why we use the migrations. This allows tests to use the database schema as well as be independent
-- [ ] cleanup:
+- [x] cleanup:
     - add documentation for:
         - running dev database
         - running database migrations
@@ -107,4 +107,25 @@
         - https://docs.rs/yrs/latest/yrs/struct.StateVector.html
     - y-sync documentation
         - helpful for using an already defined wire format for sync and update messages
-- Insight: 
+
+- testing:
+    - run the database and the websocket message proxy server:
+    ```bash
+    cd message_proxy
+    docker compose -f docker-compose-sqlx.yml up -D
+    cargo run --bin message_proxy
+    ```
+    - open a new terminal and run one instance of the tui
+    ```bash
+    cd message_proxy
+    cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 1 2> error2.log
+    ```
+    - make manual edits in this window
+    - open a new terminal and run a second instance of the tui with the same topic_id but a different client_id
+    ```bash
+    cd message_proxy
+    cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 2 2> error2.log
+    ```
+    - observe that the edits made by the other client are visible
+    - make manual edits in either window
+    - observe that edits are synced between tui clients

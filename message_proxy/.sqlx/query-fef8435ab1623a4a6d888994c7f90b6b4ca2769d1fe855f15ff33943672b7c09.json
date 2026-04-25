@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH version_vector AS(\n                SELECT * FROM UNNEST($1::bigint[], $2::bigint[])\n                AS t(client_id, min_offset)\n            )\n            SELECT o.* \n            FROM operations o \n            LEFT JOIN version_vector\n                ON o.client_id = version_vector.client_id\n            WHERE (\n                version_vector.client_id IS NULL\n                OR o.operation_offset > version_vector.min_offset\n            ) AND o.topic_id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "topic_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "client_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "operation_offset",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fef8435ab1623a4a6d888994c7f90b6b4ca2769d1fe855f15ff33943672b7c09"
+}

@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = { version = "0.8.8", features = ["ws"] }
+axum = { version = "0.8.8", features = ["macros", "ws"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-channel = "0.3.32"
 futures-util = "0.3.32"
 ratatui = "0.29.0"
+serde = "1.0.228"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "uuid"] }
+thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-tungstenite = "0.29.0"
 tokio-util = "0.7.18"

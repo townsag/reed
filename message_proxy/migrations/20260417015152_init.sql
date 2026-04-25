@@ -1,4 +1,5 @@
-CREATE TABLE messages (
+-- Add migration script here
+CREATE TABLE IF NOT EXISTS messages (
     topic_id UUID NOT NULL,
     user_id UUID NOT NULL,
     message_offset INTEGER,
@@ -6,7 +7,7 @@ CREATE TABLE messages (
     PRIMARY KEY (topic_id, user_id, message_offset)
 );
 
-CREATE TABLE operations (
+CREATE TABLE IF NOT EXISTS operations (
     topic_id UUID NOT NULL,
     user_id UUID NOT NULL,
     client_id BIGINT NOT NULL,  -- store a signed i64 here 

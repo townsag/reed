@@ -6,14 +6,16 @@ pub mod config {
     pub mod postgres;
 }
 mod repository;
+mod state_machine;
 
 use axum::{
     Router,
     routing::{any,get},
 };
+use uuid::Uuid;
 use crate::{
-    broker::{Broker, BrokerBuilder, BrokerMessage}, 
-    handlers::handler, 
+    broker::{Broker, BrokerBuilder}, 
+    handlers::{handler, UpdateMessage}, 
     repository::{Repository, postgres::PgRepo},
     config::postgres,
 };
@@ -24,34 +26,12 @@ use tracing::{
 use tracing_subscriber::{
     filter::LevelFilter,
 };
-use yrs::{Doc, Text, Transact, Update, updates::decoder::Decode};
 
-
-fn try_yrs() {
-    // create a local copy of the document
-    let doc_l = Doc::new();
-    let text_l = doc_l.get_or_insert_text("content");
-    // create a remote copy of the document
-    // let doc_r = Doc::new();
-    // let text_r = doc_r.get_or_insert_text("content");
-    // make a modification to the local document
-    {
-        let mut txn1 = doc_l.transact_mut();
-        // observe the changes to the local document
-        text_l.insert(&mut txn1, 0, "Hello");
-        let updates = txn1.encode_update_v1();
-        // try to decode and debug print the updates so that they make some sense
-        match Update::decode_v1(&updates) {
-            Ok(update) => print!("{:#?}", update),
-            Err(e) => print!("failed to decode with error: {}", e),
-        };
-    }
-}
 
 
 #[derive(Clone)]
 struct AppState<R: Repository> {
-    broker: Broker<BrokerMessage>,
+    broker: Broker<Uuid, UpdateMessage>,
     // TODO: learn more about the difference between dynamic dispatch and static dispatch
     // for now it seemed prudent to use static dispatch here because we are always going to know the
     // repository type at compile time and we are not going to use multiple repository types 
@@ -69,14 +49,14 @@ pub async fn run() {
             return;
         }
     };
-    let broker = BrokerBuilder::default().build::<BrokerMessage>();
+    let broker = BrokerBuilder::default().build::<Uuid, UpdateMessage>();
     // when creating a router the state type parameter indicates the type of the state
     // struct that has not yet been passed to the router (using .with_state(: S))
     // this is why we don't parameterize the with_state function, that would indicate
     // that there is still a state that needs to be passed to the router
     let app = Router::new()
         .route("/", get(|| async {"hello world"}))
-        .route("/ws/{topic_id}/{user_id}", any(handler))
+        .route("/ws/{topic_id}/{user_id}", any(handler::<PgRepo>))
         .with_state(AppState::<PgRepo>{ broker, repo: PgRepo::new(pool) });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

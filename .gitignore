@@ -5,3 +5,6 @@ note_ui/
 user_service/go-stdlib-common-interfaces.md
 
 temp/
+*.DS_Store
+
+*.log

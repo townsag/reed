@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT MAX(operation_offset) AS max_offset FROM operations\n            WHERE client_id =$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max_offset",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "beb37c1cbddfe92c5b1c6e618288ee52de8fde94f14b2f7498c4e4ba4c1205eb"
+}

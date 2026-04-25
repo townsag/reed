@@ -250,7 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
      */
     let args: Vec<String> = env::args().collect();
     let config = Config::build(&args).unwrap_or_else(|e| {
-        println!("failed to parse string with {e}");
+        eprintln!("failed to parse string with {e}");
         process::exit(1);
     });
 

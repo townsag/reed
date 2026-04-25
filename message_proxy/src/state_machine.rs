@@ -43,9 +43,9 @@ enum WriterState<R: Repository> {
 // this is sometimes more useful because different methods can be implemented for the state
 // struct depending on the state type parameter. Furthermore, the state type can hold the 
 trait WriterState {}
-struct WriterAwaitingHandshake;
+pub struct WriterAwaitingHandshake;
 // ^ this could also be an enum if there were many variations of the awaiting handshake state
-struct WriterHotPath {
+pub struct WriterHotPath {
     in_flight_operations_state_vector: StateVector,
 }
 impl WriterState for WriterAwaitingHandshake {}
@@ -65,7 +65,7 @@ impl Writer <WriterAwaitingHandshake> {
     // given the clients version vector, we want to find all of the updates from 
     // other clients that this client has not received yet
     pub fn prepare_sync_step_2(
-        self,
+        &self,
         client_version_vector: StateVector,
     ) -> Vec<(u64, u32)> {
         client_version_vector
@@ -76,7 +76,7 @@ impl Writer <WriterAwaitingHandshake> {
     // this function consumes self and returns a new instance of the writer 
     // this client version vector is expected to come from the SyncMessage::SyncStep1 variant. The resulting update is
     // expected to be used to create a SyncMessage::SyncStep2 variant
-    pub async fn receive_state_vector(
+    pub fn receive_state_vector(
         self, 
         mut client_version_vector: StateVector,
         happens_after_updates: Vec<Update>,
@@ -148,7 +148,7 @@ pub struct Reader <S: ReaderState, R: Repository> {
 impl<R: Repository> Reader<ReaderAwaitingHandshake, R> {
     pub async fn new(repo: R, topic_id: Uuid, user_id: Uuid, client_id: u64) -> Result<Self, Box<dyn Error>> {
         // read the last received update offset from this client from the database
-        let last_received_offset = repo.read_last_received_offset(client_id).await?;
+        let last_received_offset = repo.read_last_received_offset(client_id).await?.unwrap_or(0);
         // create a reader instance and return it
         Ok(Reader{
             topic_id, user_id, client_id, last_received_offset, repo, state: ReaderAwaitingHandshake,

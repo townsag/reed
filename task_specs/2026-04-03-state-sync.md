@@ -53,21 +53,21 @@
 - [ ] state sync on OS buffer overflow, resulting in missed ws message
     - this will manifest as an error when receiving from the websocket stream
     - this is outside of the scope of this task
-- [ ] state sync on handshake:
+- [x] state sync on handshake:
     - when a new websocket connection is created with a client, that client may have locally applied operations that are not synced with the server. Furthermore, remote clients editing the same document might have operations that are not synced with the new client.
     - for those reasons we need a state sync handshake when creating a new websocket connection
     - insight:
         - the syncing all updates from remote clients to the client is independent from syncing all updates from the client to the server
         - we can treat these two tasks as independent
-    - [ ] ensure that the client has all the updates from the remote clients
+    - [x] ensure that the client has all the updates from the remote clients
         - states:
             - server writer: (waiting for handshake) --client version vector--> (hot path) + server bulk update
-        - [ ] the client sends a message with the version vector of updates that it has received
-        - [ ] the server sends a bulk update message with all the updates from remote clients with a happens after relationship relative to the version vector
+        - [x] the client sends a message with the version vector of updates that it has received
+        - [x] the server sends a bulk update message with all the updates from remote clients with a happens after relationship relative to the version vector
         - server switches to hot path
         - we could wait for an ack from the client here, I am still thinking about that
             - we do not need an ack here because a disconnect or dropped message will both result in a new websocket connection being created and a new handshake
-    - [ ] ensure that the server has all the local updates from the client
+    - [x] ensure that the server has all the local updates from the client
         - states:
             - server reader: (waiting for handshake) + current version --client bulk update--> (hot path)
                 - client bulk update can be empty if we are up to date
@@ -77,8 +77,8 @@
         - the client sends a bulk update of all the operations with a happens after relationship relative to the last seen offset by the server
             - the client bulk update can be empty
         - client switches to hot path
-- [ ] database changes:
-    - [ ] add the idea of migrations to the message proxy service
+- [x] database changes:
+    - [x] add the idea of migrations to the message proxy service
         - this allows us to perform these migrations as part of integration tests
         - https://docs.rs/sqlx/latest/sqlx/migrate/trait.MigrationSource.html
         - you can run migrations using this pattern
@@ -91,6 +91,13 @@
         ```
         - then change the env variable that indicates we should use offline mode
     - tests are run in their own isolated database, that is why we use the migrations. This allows tests to use the database schema as well as be independent
+- [ ] cleanup:
+    - add documentation for:
+        - running dev database
+        - running database migrations
+        - setting the cache of schemas to enable local development without the dev database server
+        - running the tui
+
 
 
 - Resources:

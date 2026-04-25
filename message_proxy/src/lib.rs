@@ -56,7 +56,7 @@ pub async fn run() {
     // that there is still a state that needs to be passed to the router
     let app = Router::new()
         .route("/", get(|| async {"hello world"}))
-        .route("/ws/{topic_id}/{user_id}", any(handler))
+        .route("/ws/{topic_id}/{user_id}", any(handler::<PgRepo>))
         .with_state(AppState::<PgRepo>{ broker, repo: PgRepo::new(pool) });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

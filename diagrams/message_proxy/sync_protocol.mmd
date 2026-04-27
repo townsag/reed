@@ -1,0 +1,28 @@
+%%{init: {'theme':'dark'}}%%
+sequenceDiagram
+    participant client
+    participant server
+    Note right of server: Ordering Legend<br/>client sync step 1 -> server sync step 2 -> server update(s)<br/>server sync step 1 -> client sync step 2 -> client update(s)<br/>messages not bound by the order shown here are commutative
+    par
+        Note over client, server: what operations has the<br/>client seen so far from the server
+        client ->> server: Client Sync step 1
+        Note over client, server: what operations has the<br/>server seen so far from the client
+        server ->> client: Server Sync step 1
+    end
+    par
+        Note over client, server: operations from the client<br/>that the server has not seen yet
+        client ->> server: Client Sync step 2
+        Note over client, server: now the client can<br/>optimistically send update messages
+        Note right of server: state transition: reader handshake -> reader hot path
+        Note over client, server: operations from the server<br/>that the client has not seen yet
+        server ->> client: Server Sync step 2 
+        Note right of server: state transition: writer handshake -> writer hot path
+        Note over client, server: now the server can<br/>optimistically send update messages
+    end
+    rect rgba(92, 244, 92, 0.2)
+    par Hot Path
+        client -) server: Client Update operation
+        server -) client: Server Update operation 
+    end
+    Note right of server: operation messages are commutative
+    end

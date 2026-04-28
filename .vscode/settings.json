@@ -23,6 +23,7 @@
     "pgtype",
     "pgxpool",
     "qwer",
+    "rgba",
     "semconv",
     "serializability",
     "sqlc",

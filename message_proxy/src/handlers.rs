@@ -2,10 +2,11 @@
 // option tab is the command to prompt VSCode to suggest symbols
 use tokio::sync::broadcast::{
     Sender as BCSender, 
-    error::RecvError,
+    error::RecvError as BroadcastRVError,
 };
-use tokio::sync::mpsc::{
-    self, Receiver as MPSCReceiver, Sender as MPSCSender
+use tokio::sync::oneshot::{
+    self, Receiver, Sender
+    // error::RecvError,
 };
 use yrs::updates::encoder::Encode;
 use std::sync::Arc;
@@ -43,10 +44,10 @@ use thiserror::Error;
 use serde;
 use tracing::{event, Level};
 
+#[derive(Debug)]
 enum ReaderEvent {
     // ClosedByClient,
     // ClosedByServer,
-    ServerSyncStep1(Vec<u8>),
     ClientSyncStep1(Vec<u8>),
 }
 
@@ -132,20 +133,36 @@ async fn decode_helper(
         },
         Some(Ok(_)) => Decoded::Skip,
     }
-
 }
 
-// read messages from the websocket connection and send those messages to the broker
-async fn read<R: Repository>(
-    mut receiver: SplitStream<WebSocket>, 
-    sender_broker: BCSender<UpdateMessage>,
-    tx_sync: MPSCSender<ReaderEvent>,
-    repo: R,
-    session_context: SessionContext,
-    cancel_read_token: CancellationToken,
-) -> Result<(), TaskError> {
-    let mut _last_received_offset = repo.read_last_received_offset(session_context.client_id).await?;
-    event!(Level::INFO, "read last received offset: {:?}", _last_received_offset);
+fn build_server_sync_step_1(
+    last_received_offset: Option<u32>, client_id: u64,
+) -> SyncMessage {
+    /*
+    Originally this code was part of the reader to preserve separation of concerns. The read task is 
+    concerned with which operations the server has received from the client. The writer is concerned with 
+    which operations the client has received from the server. This code was moved from the reader to the
+    writer to simplify the implementation of the writer. If this message is created in the writer. It 
+    does not need to be communicated between the reader and the writer. The writer implementation does
+    not need to worry about listening for Server Sync Step 1 reader events when it is in the hot path.
+    This eliminates the possibility of a race condition between the writer and the reader in which the
+    writer stops listening for reader events (because it is in the hot path) before the reader has 
+    the time to transmit the server sync step 1 message
+    */
+    /*
+    In the future if we want to reinstate separation of concerns:
+    - the server sync step one message should be returned by the read state machine constructor
+    - Create the reader and the writer state machines in the handle_socket function.
+    - pass the server sync step one message into the writer task along with the writer state machine
+    */
+    /*
+    Tradeoff:
+    - the writer task has to wait to construct and send a server sync step one message before it can 
+      receive an process a client sync step one message. This means that potentially long database 
+      read times could stall the writer handshake process even though reading the last received message
+      for this client_id is independent from the writer sync process.
+    */
+    event!(Level::INFO, "read last received offset: {:?}", last_received_offset);
     /*
     State vectors in Yrs are zero indexed, meaning that a state vector that has received no operations 
     from a client has no record of that client (instead of having the key value pair client_id: 0).
@@ -154,16 +171,26 @@ async fn read<R: Repository>(
     // send a message to the client indicating what updates we have already so that the client can send us
     // a bulk update of messages that we are missing 
     let mut reader_sv = StateVector::default();
-    if let Some(op) = _last_received_offset {
-        reader_sv.set_max(session_context.client_id, op);
+    if let Some(op) = last_received_offset {
+        reader_sv.set_max(client_id, op);
     }
     event!(Level::INFO, "sending state vector from writer to reader: {:?}", reader_sv);
-    let encoded_state_vector = reader_sv.encode_v1();
-    tx_sync.send(ReaderEvent::ServerSyncStep1(encoded_state_vector)).await?;
+    SyncMessage::SyncStep1(reader_sv)
+}
 
+// read messages from the websocket connection and send those messages to the broker
+async fn read<R: Repository>(
+    mut receiver: SplitStream<WebSocket>, 
+    sender_broker: BCSender<UpdateMessage>,
+    tx_sync: Sender<ReaderEvent>,
+    repo: R,
+    session_context: SessionContext,
+    cancel_read_token: CancellationToken,
+) -> Result<(), TaskError> {
+    let mut tx_sync_opt = Some(tx_sync);
     // expect the client to send us a sync step one message including their version vector
     // or a sync step two message including the local updates that the server does not yet have
-    _last_received_offset = loop {
+    let mut _last_received_offset = loop {
         tokio::select! {
             biased;
             _ = cancel_read_token.cancelled() => {
@@ -174,7 +201,10 @@ async fn read<R: Repository>(
                     // sync step one messages get processed by the writer
                     // TODO: may need some error handling code here in the case that 
                     // the client receiver has already been dropped
-                    tx_sync.send(ReaderEvent::ClientSyncStep1(sv.encode_v1())).await?;
+                    if let Some(tx_sync) = tx_sync_opt.take() {
+                        tx_sync.send(ReaderEvent::ClientSyncStep1(sv.encode_v1()))
+                            .map_err(TaskError::ReaderToWriterSendError)?;
+                    }
                 },
                 Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update)) => {
                     // if it is a sync step two message, process it at the reader then break
@@ -235,7 +265,10 @@ async fn read<R: Repository>(
                     // sync step one messages get processed by the writer
                     // TODO: may need some error handling code here in the case that 
                     // the client receiver has already been dropped
-                    tx_sync.send(ReaderEvent::ClientSyncStep1(sv.encode_v1())).await?;
+                    if let Some(tx_sync) = tx_sync_opt.take() {
+                        tx_sync.send(ReaderEvent::ClientSyncStep1(sv.encode_v1()))
+                            .map_err(TaskError::ReaderToWriterSendError)?;
+                    }
                 },
                 Decoded::Valid(SyncMessage::SyncStep2(_)) => { /* if it is a sync step two message, ignore it */ },
                 // if it is an update message, skip it
@@ -268,7 +301,7 @@ async fn read<R: Repository>(
 }
 
 #[derive(Error, Debug)]
-pub enum TaskError {
+enum TaskError {
     #[error("failed to decode")]
     DecodeError(#[from] yrs::encoding::read::Error),
     // TODO: make this more precise
@@ -278,8 +311,8 @@ pub enum TaskError {
     WSWriteMessage(#[from] axum::Error),
     #[error("failed to receive from the broker")]
     BrokerReceiveError(#[from] tokio::sync::broadcast::error::RecvError),
-    #[error("failed to send a message from the reader to the write")]
-    ReaderToWriterSendError(#[from] tokio::sync::mpsc::error::SendError<ReaderEvent>),
+    #[error("failed to send a message from the reader to the writer")]
+    ReaderToWriterSendError(ReaderEvent),
     #[error("failed to send an update message from the reader to the broker")]
     ReaderToBroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<UpdateMessage>),
 }
@@ -288,11 +321,15 @@ pub enum TaskError {
 async fn write<R: Repository>(
     mut sender: SplitSink<WebSocket, Message>, 
     mut receiver_broker: WrappedReceiver<Uuid, UpdateMessage>,
-    mut rx_sync: MPSCReceiver<ReaderEvent>,
+    rx_sync: Receiver<ReaderEvent>,
     repo: R,
     session_context: SessionContext,
     cancel_token: CancellationToken,
 ) -> Result<(), TaskError> {
+    let mut _last_received_offset = repo.read_last_received_offset(session_context.client_id).await?;
+    let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, session_context.client_id);
+    sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
+
     // create an instance of the writer state
     let writer = Writer::new(
         session_context.topic_id, session_context.user_id, session_context.client_id
@@ -300,14 +337,15 @@ async fn write<R: Repository>(
     // while in the writer awaiting handshake state, we can only receive state vector messages from the 
     // client indicating the messages that the client has already received. Only then can we start 
     // sending the client update messages
-    let (writer , bulk_update) = loop {
+    let (_writer , bulk_update) = loop {
         tokio::select! {
             biased;
             _ = cancel_token.cancelled() => {
+                // TODO: should we be sending a closing frame here?
                 return Ok(());
             },
-            result = rx_sync.recv() => match result {
-                Some(ReaderEvent::ClientSyncStep1(encoded_sv)) => {
+            result = rx_sync => match result {
+                Ok(ReaderEvent::ClientSyncStep1(encoded_sv)) => {
                     let pairs = {
                         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
                         writer.prepare_sync_step_2(client_state_vector)
@@ -325,13 +363,7 @@ async fn write<R: Repository>(
                     );
                     break (hot_path_writer, decoded_bulk_update.encode_v1())
                 },
-                Some(ReaderEvent::ServerSyncStep1(encoded_sv)) => {
-                    let decoded_sv = StateVector::decode_v1(&encoded_sv)?;
-                    sender.send(
-                        Message::Binary(SyncMessage::SyncStep1(decoded_sv).encode_v1().into())
-                    ).await?;
-                },
-                None => {
+                Err(_) => {
                     // the sync channel returning none means that the channel has been closed
                     // this can only happen if the read task has completed. In that case we 
                     // want to send a closing frame over the websocket connection then close 
@@ -359,6 +391,7 @@ async fn write<R: Repository>(
         tokio::select! {
             biased;
             _ = cancel_token.cancelled() => {
+                // TODO: should we be sending a closing frame here
                 return Ok(());
             },
             message = receiver_broker.recv() => {
@@ -376,7 +409,7 @@ async fn write<R: Repository>(
                         // TODO: batch send messages, concatenate many broker messages into one ws message
                         sender.send(ws_message).await?;
                     },
-                    Err(e @ RecvError::Closed) => {
+                    Err(e @ BroadcastRVError::Closed) => {
                         // handle closure of the receiver from the broker
                         // this is an unrecoverable internal server error, we should close the connection
                         let _ = sender.send(Message::Close(Some(
@@ -384,13 +417,14 @@ async fn write<R: Repository>(
                         )));
                         return Err(TaskError::BrokerReceiveError(e));
                     },
-                    Err(RecvError::Lagged(_)) => {
+                    Err(BroadcastRVError::Lagged(_)) => {
                         // TODO: this is the case in which we missed some messages sent to this topic
                         //       by some fast senders. We should read the missed messages from the
                         //       database so that we can catch up
                     }
                 }
             },
+            
             // we don't need to listen for more messages from rx_sync here because in order to 
             // get to the hot path of the protocol we must have already consumed one of the 
             // sync step one messages already.
@@ -398,7 +432,7 @@ async fn write<R: Repository>(
     }
 }
 
-// TODO: parse a 
+// TODO: parse the user id from a query parameter with a jwt in it
 async fn handle_socket<R: Repository>(
     socket: WebSocket,
     topic_id: Uuid,
@@ -414,7 +448,7 @@ async fn handle_socket<R: Repository>(
     // events to the write task
     let (
         tx_sync, rx_sync
-    ) = mpsc::channel(5);
+    ) = oneshot::channel();
     // create a cancellation token that write task can use to signal to the read task that 
     // it should shut down. We use a cancellation token here instead of a channel because 
     // we do not need to communicate the reason for cancellation

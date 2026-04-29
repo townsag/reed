@@ -1,0 +1,7 @@
+FROM rust:1.94.1
+RUN cargo install sqlx-cli
+WORKDIR /app
+# copy in the migrations directory to get the schema file
+COPY ./migrations/ /app/migrations
+# run the migrations
+CMD sqlx migrate run --database-url ${DATABASE_URL}

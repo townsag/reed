@@ -1,0 +1,7 @@
+# we do not include the target directory in the COPY command 
+# of the build section of the docker file so this is not needed
+# to reduce the docker image size. However this prevents the 
+# target/ directory from being sent to the docker daemon while
+# the docker daemon is building the image. So this is an 
+# optimization for faster build times not for smaller images
+target/

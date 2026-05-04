@@ -1,6 +1,7 @@
+name: message_proxy_subsystem
 services:
   postgres:
-    container_name: postgres
+    # container_name: postgres
     image: postgres:17
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
@@ -17,11 +18,10 @@ services:
     # restart: always
     volumes:
       - pgData:/var/lib/postgresql/data
-  
   migrate:
-    container_name: migrate
+    # container_name: migrate
     build:
-      context: ./
+      context: ./message_proxy/
       dockerfile: Dockerfile.sqlx-init
     depends_on:
       postgres:
@@ -30,9 +30,9 @@ services:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/message_proxy?sslmode=disable
   
   message_proxy:
-    container_name: message_proxy
+    # container_name: message_proxy
     build:
-      context: ./
+      context: ./message_proxy/
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
@@ -41,12 +41,23 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASS=${POSTGRES_PASSWORD}
       - POSTGRES_DATABASE=message_proxy
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=full
+    networks:
+      - default
+      - telemetry
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
-  
+networks:
+  telemetry:
+    name: clickstack_subsystem_telemetry
+    external: true
+
 volumes:
   pgData:

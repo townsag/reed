@@ -1,10 +1,14 @@
 {
   "cSpell.words": [
+    "CLICKHOUSE",
+    "clickstack",
     "codegen",
     "DBTX",
+    "DOCKERHUB",
     "emptypb",
     "execrows",
     "healthcheck",
+    "HYPERDX",
     "initdb",
     "isready",
     "jackc",
@@ -12,6 +16,7 @@
     "nxyt",
     "Oapi",
     "oneshot",
+    "OPAMP",
     "otelgrpc",
     "otelpgx",
     "otelslog",

@@ -112,6 +112,15 @@ Save these sub-tasks for the feat/mp-logging-instrumentation task
         - this can be overcome by including information like start time etc in the message that is sent from one server to another
         - ex: if an event is produced on one machine, how long until all of that machines peers finish processing that event
         - can spans be created that span multiple machines?
+- clickstack implementation:
+    - source for clickstack yaml
+        - https://github.com/ClickHouse/ClickStack/blob/main/docker-compose.yml
+    - clickhouse exporter for otel collector contrib
+        - https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md
+    - clickstack otel collector config.yaml
+        - https://github.com/hyperdxio/hyperdx/blob/main/docker/otel-collector/config.yaml
+    - healthcheck extension
+        - https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/extension/healthcheckextension/README.md
 
 ## Resources (observability instrumentation):
 - tracing library docs:

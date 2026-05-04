@@ -4,6 +4,7 @@ mod handlers;
 pub mod broker;
 pub mod config {
     pub mod postgres;
+    pub mod otel;
 }
 mod repository;
 mod state_machine;
@@ -17,15 +18,15 @@ use crate::{
     broker::{Broker, BrokerBuilder}, 
     handlers::{handler, UpdateMessage}, 
     repository::{Repository, postgres::PgRepo},
-    config::postgres,
+    config::{postgres, otel},
 };
 use tracing::{
     event,
     Level,
 };
-use tracing_subscriber::{
-    filter::LevelFilter,
-};
+// use tracing_subscriber::{
+//     filter::LevelFilter,
+// };
 
 
 
@@ -40,8 +41,10 @@ struct AppState<R: Repository> {
 }
 
 pub async fn run() {
-    // try_yrs();
-    tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
+    // tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
+    // when the provider guard is dropped at the end of the run scope the drop function
+    // of the provider guard will flush the various providers
+    let _provider_guard = otel::init_otel();
     let pool = match postgres::build_postgres_pool().await {
         Ok(pool) => pool,
         Err(err) => {

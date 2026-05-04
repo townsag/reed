@@ -16,3 +16,15 @@ cd user_service
 go run call_user_service.go
 # view the traces at localhost:3000 
 ```
+
+## Start ClickStack Subsystem
+```bash
+docker compose -f docker-compose-clickstack.yml --env-file docker/envs/clickstack-subsytem.env up
+# http://localhost:8080
+```
+
+## Start Message Proxy Subsystem:
+```bash
+docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env build
+docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env up
+```

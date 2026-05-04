@@ -8,6 +8,10 @@ axum = { version = "0.8.8", features = ["macros", "ws"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-channel = "0.3.32"
 futures-util = "0.3.32"
+opentelemetry-appender-tracing = "0.31.1"
+opentelemetry-otlp = { version = "0.31.1", features = ["grpc-tonic"] }
+opentelemetry-stdout = "0.31.0"
+opentelemetry_sdk = "0.31.0"
 ratatui = "0.29.0"
 serde = "1.0.228"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "uuid"] }
@@ -16,7 +20,8 @@ tokio = { version = "1.49.0", features = ["full"] }
 tokio-tungstenite = "0.29.0"
 tokio-util = "0.7.18"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 trait-variant = "0.1.2"
 tui-textarea = { version = "0.7.0", features = ["ratatui", "crossterm"] }
 uuid = { version = "1.22.0", features = ["serde", "v4"] }

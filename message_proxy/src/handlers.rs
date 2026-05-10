@@ -10,6 +10,7 @@ use tokio::sync::oneshot::{
 };
 use yrs::updates::encoder::Encode;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -178,6 +179,46 @@ fn build_server_sync_step_1(
     SyncMessage::SyncStep1(reader_sv)
 }
 
+async fn reader_hot_path_loop<R: Repository>(
+    session_context: &SessionContext,
+    encoded_update: Vec<u8>,
+    sender_broker: &BCSender<UpdateMessage>,
+    repo: &R
+) -> Result<Option<u32>, TaskError> {
+    let start = Instant::now();
+    let update_size_bytes = encoded_update.len();
+    // if it is an update message, process it with the reader then forward
+    // it to other connected clients using the broker
+    let new_offset = {
+        let update = Update::decode_v1(&encoded_update)?;
+        event!(
+            Level::INFO,
+            "received update message {:?} with offset {}",
+            update, update.state_vector_lower().get(&session_context.client_id),
+        );
+        event!(Level::INFO, "with state vector: {:?}", update.state_vector_lower());
+        update.state_vector_lower().get(&session_context.client_id)
+    };
+    repo.write_operation(
+        session_context.topic_id, session_context.user_id, session_context.client_id, 
+        new_offset, &encoded_update,
+    ).await?;
+    let message = UpdateMessage { 
+        client_id: session_context.client_id, 
+        payload: Arc::new(encoded_update),
+    };
+    sender_broker.send(message)?;
+    event!(
+        name: "reader_hot_path_canonical_log_line",
+        Level::INFO,
+        new_offset,
+        update_size_bytes,
+        duration = start.elapsed().as_millis(),
+        "completed reader hot path loop",
+    );
+    return Ok(Some(new_offset));
+}
+
 // read messages from the websocket connection and send those messages to the broker
 async fn read<R: Repository>(
     mut receiver: SplitStream<WebSocket>, 
@@ -270,28 +311,16 @@ async fn read<R: Repository>(
                             .map_err(TaskError::ReaderToWriterSendError)?;
                     }
                 },
-                Decoded::Valid(SyncMessage::SyncStep2(_)) => { /* if it is a sync step two message, ignore it */ },
+                Decoded::Valid(SyncMessage::SyncStep2(_)) => { 
+                    /* if it is a sync step two message, ignore it. 
+                    We must have already processed the client sync 
+                    step two message in order to get to the reader hot path */ 
+                },
                 // if it is an update message, skip it
                 Decoded::Valid(SyncMessage::Update(encoded_update)) => {
-                    // if it is an update message, process it with the reader then forward
-                    // it to other connected clients using the broker
-                    let new_offset = {
-                        let update = Update::decode_v1(&encoded_update)?;
-                        event!(
-                            Level::INFO,
-                            "received update message {:?} with offset {}",
-                            update, update.state_vector_lower().get(&session_context.client_id),
-                        );
-                        event!(Level::INFO, "with state vector: {:?}", update.state_vector_lower());
-                        update.state_vector_lower().get(&session_context.client_id)
-                    };
-                    repo.write_operation(
-                        session_context.topic_id, session_context.user_id, session_context.client_id, 
-                        new_offset, &encoded_update,
-                    ).await?;
-                    _last_received_offset = Some(new_offset);
-                    let message = UpdateMessage { client_id: session_context.client_id, payload: Arc::new(encoded_update) };
-                    sender_broker.send(message)?;
+                    _last_received_offset = reader_hot_path_loop(
+                        &session_context, encoded_update, &sender_broker, &repo
+                    ).await?
                 },
                 Decoded::Skip => {},
                 Decoded::Failure => { return Ok(()); }
@@ -431,6 +460,16 @@ async fn write<R: Repository>(
         }
     }
 }
+
+/*
+Consider refactoring such that socket handler is a struct with fields like 
+session context and repo. Some of the values that need to be passed into the
+handler functions can be accessed easier using self if read and write become
+methods on the handler struct
+
+Encapsulate shared state in a handler struct.
+Prevent prop drilling.
+*/
 
 // TODO: parse the user id from a query parameter with a jwt in it
 async fn handle_socket<R: Repository>(

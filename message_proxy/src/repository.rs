@@ -83,7 +83,7 @@ impl std::error::Error for RepoError {}
 // between cores. We use this macro to indicate that all structs that implement this trait
 // must do so in such a way that the futures returned are Send.
 #[trait_variant::make(Send)]
-pub trait Repository: Send + Clone + 'static {
+pub trait Repository: Send + Sync + Clone + 'static {
     // TODO: look into whether I should use an owned value or a string slice reference when writing to the database
     // https://doc.rust-lang.org/book/ch17-05-traits-for-async.html
     // async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;

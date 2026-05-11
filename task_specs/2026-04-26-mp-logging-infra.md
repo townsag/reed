@@ -121,6 +121,8 @@ Save these sub-tasks for the feat/mp-logging-instrumentation task
         - https://github.com/hyperdxio/hyperdx/blob/main/docker/otel-collector/config.yaml
     - healthcheck extension
         - https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/extension/healthcheckextension/README.md
+    - schemas:
+        - https://github.com/ClickHouse/clickhouse-docs/blob/main/docs/use-cases/observability/clickstack/ingesting-data/schemas.md
 
 ## Resources (observability instrumentation):
 - tracing library docs:

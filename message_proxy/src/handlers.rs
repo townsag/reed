@@ -252,7 +252,7 @@ impl <R: Repository> WebsocketHandler<R> {
             name: "reader_client_sync_step_two_canonical_log_line",
             Level::INFO,
             last_offset_from_client=new_offset,
-            duration=start.elapsed().as_millis(),
+            duration_ns=start.elapsed().as_nanos(),
             skipped_persistence,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -295,7 +295,7 @@ impl <R: Repository> WebsocketHandler<R> {
             Level::INFO,
             new_offset,
             update_size_bytes,
-            duration = start.elapsed().as_millis(),
+            duration_ns = start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
@@ -404,7 +404,7 @@ impl <R: Repository> WebsocketHandler<R> {
         event!(
             name: "writer_client_sync_step_one_canonical_log_line",
             Level::INFO,
-            duration=start.elapsed().as_millis(),
+            duration_ns=start.elapsed().as_nanos(),
             count_updates=happens_after_updates.len(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -432,7 +432,7 @@ impl <R: Repository> WebsocketHandler<R> {
         event!(
             name: "writer_hot_path_canonical_log_line",
             Level::INFO,
-            duration=start.elapsed().as_millis(),
+            duration_ns=start.elapsed().as_nanos(),
             // TODO: we may need to gather more metadata here like client_id and offset of the update
             skipped_message,
             topic_id=self.topic_id.as_hyphenated().to_string(),

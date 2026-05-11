@@ -83,7 +83,7 @@ pub async fn handler<R: Repository>(
 enum Decoded {
     // TODO: if we find that the cost of encoding and decoding is too expensive we should find
     // an alternative pattern
-    Valid(SyncMessage),
+    Valid(SyncMessage, Instant),
     Skip,
     Failure,
 }
@@ -108,13 +108,14 @@ async fn decode_helper(
         - when we get these we want to indicate to the writer that the websocket connection is closing
     */
     event!(Level::INFO, "received ws message: {:?}", result);
+    let start = Instant::now();
     match result {
         Some(Ok(Message::Binary(bytes))) => {
             event!(Level::INFO, "decoding message");
             match SyncMessage::decode_v1(&bytes) {
                 Ok(sync_message) => {
                     event!(Level::INFO, "decoded valid sync message: {:?}", sync_message);
-                    Decoded::Valid(sync_message)
+                    Decoded::Valid(sync_message, start)
                 },
                 Err(e) => {
                     event!(Level::INFO, "failed to decode message with error: {e}");
@@ -206,7 +207,8 @@ impl <R: Repository> WebsocketHandler<R> {
     async fn process_client_sync_step_two(
         &self,
         encoded_update: Vec<u8>,
-        broker_sender: &BCSender<UpdateMessage>
+        broker_sender: &BCSender<UpdateMessage>,
+        start: Instant,
     ) -> Result<Option<u32>, TaskError> {
         // if it is a sync step two message, process it at the reader then break
         /*
@@ -219,37 +221,49 @@ impl <R: Repository> WebsocketHandler<R> {
         if it has no operations in it because we don't want to save an empty update
         at a offset that a valid update would be saved at
         */
+        // decoded Updates cannot be held across await boundaries because it is not send
+        // when possible, we need to drop the update before an await boundary
         let new_offset = {
             let client_bulk_update = Update::decode_v1(&encoded_update)?;
-            event!(Level::INFO, "received client sync step two message {client_bulk_update}");
             let update_state_vector = client_bulk_update.state_vector_lower();
             if !update_state_vector.contains_client(&self.client_id) {
                 event!(Level::INFO, "skipping writing this update to the db because it contains no operations");
-                return Ok(None);
+                None
+            } else {
+                Some(update_state_vector.get(&self.client_id))
             }
-            update_state_vector.get(&self.client_id)
         };
-        // decoded Updates cannot be held across await boundaries because it is not send
-        // when possible, we need to drop the update before an await boundary
-        self.repo.write_operation(
-            self.topic_id, self.user_id, self.client_id, 
-            new_offset, &encoded_update
-        ).await?;
-        event!(Level::INFO, "finished writing client sync step two operation");
-        // write the bulk update to the broadcast channel
-        let update_message = UpdateMessage{
-            client_id: self.client_id, payload: Arc::new(encoded_update),
-        };
-        broker_sender.send(update_message)?;
-        return Ok(Some(new_offset));
+        // if the message had new operations in it, write the message to the database
+        let mut skipped_persistence = true;
+        if let Some(new_offset) = new_offset {
+            skipped_persistence = false;
+            self.repo.write_operation(
+                self.topic_id, self.user_id, self.client_id, 
+                new_offset, &encoded_update
+            ).await?;
+            // write the bulk update to the broadcast channel
+            let update_message = UpdateMessage{
+                client_id: self.client_id, payload: Arc::new(encoded_update),
+            };
+            broker_sender.send(update_message)?;
+        }
+        event!(
+            name: "reader_client_sync_step_two_canonical_log_line",
+            Level::INFO,
+            last_offset_from_client=new_offset,
+            duration=start.elapsed().as_millis(),
+            skipped_persistence,
+            "received an persisted client sync step two message, transitioning from handshake to hot path for reader",
+        );
+        return Ok(new_offset);
     }
 
     async fn reader_hot_path(
         &self,
         encoded_update: Vec<u8>,
         sender_broker: &BCSender<UpdateMessage>,
+        start: Instant,
     ) -> Result<Option<u32>, TaskError> {
-        let start = Instant::now();
         let update_size_bytes = encoded_update.len();
         // if it is an update message, process it with the reader then forward
         // it to other connected clients using the broker
@@ -300,17 +314,18 @@ impl <R: Repository> WebsocketHandler<R> {
                     return Ok(());
                 },
                 result = websocket_receiver.next() => match decode_helper(result).await {
-                    Decoded::Valid(SyncMessage::SyncStep1(sv)) => {
+                    Decoded::Valid(SyncMessage::SyncStep1(sv), _start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv);
                     },
-                    Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update)) => {
+                    Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update), start) => {
                         break self.process_client_sync_step_two(
                             encoded_bulk_update,
                             &broker_sender,
+                            start,
                         ).await?;
                     },
                     // if it is an update message, skip it
-                    Decoded::Valid(SyncMessage::Update(_)) => {},
+                    Decoded::Valid(SyncMessage::Update(_), _) => {},
                     Decoded::Skip => {},
                     Decoded::Failure => { 
                         return Ok(()); 
@@ -328,18 +343,18 @@ impl <R: Repository> WebsocketHandler<R> {
                     return Ok(());
                 },
                 result = websocket_receiver.next() => match decode_helper(result).await {
-                    Decoded::Valid(SyncMessage::SyncStep1(sv)) => {
+                    Decoded::Valid(SyncMessage::SyncStep1(sv), _start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv);
                     },
-                    Decoded::Valid(SyncMessage::SyncStep2(_)) => { 
+                    Decoded::Valid(SyncMessage::SyncStep2(_), _start) => { 
                         /* if it is a sync step two message, ignore it. 
                         We must have already processed the client sync 
                         step two message in order to get to the reader hot path */ 
                     },
                     // if it is an update message, skip it
-                    Decoded::Valid(SyncMessage::Update(encoded_update)) => {
+                    Decoded::Valid(SyncMessage::Update(encoded_update), start) => {
                         _last_received_offset = self.reader_hot_path(
-                            encoded_update, &broker_sender
+                            encoded_update, &broker_sender, start,
                         ).await?
                     },
                     Decoded::Skip => {},

@@ -254,6 +254,9 @@ impl <R: Repository> WebsocketHandler<R> {
             last_offset_from_client=new_offset,
             duration=start.elapsed().as_millis(),
             skipped_persistence,
+            topic_id=self.topic_id.as_hyphenated().to_string(),
+            user_id=self.user_id.as_hyphenated().to_string(),
+            client_id=self.client_id,
             "received an persisted client sync step two message, transitioning from handshake to hot path for reader",
         );
         return Ok(new_offset);
@@ -293,6 +296,9 @@ impl <R: Repository> WebsocketHandler<R> {
             new_offset,
             update_size_bytes,
             duration = start.elapsed().as_millis(),
+            topic_id=self.topic_id.as_hyphenated().to_string(),
+            user_id=self.user_id.as_hyphenated().to_string(),
+            client_id=self.client_id,
             "completed reader hot path loop",
         );
         return Ok(Some(new_offset));
@@ -400,6 +406,9 @@ impl <R: Repository> WebsocketHandler<R> {
             Level::INFO,
             duration=start.elapsed().as_millis(),
             count_updates=happens_after_updates.len(),
+            topic_id=self.topic_id.as_hyphenated().to_string(),
+            user_id=self.user_id.as_hyphenated().to_string(),
+            client_id=self.client_id,
             "received client sync step one message and constructed server sync step twoZ, transitioning writer from handshake to hot path"
         );
         
@@ -426,6 +435,9 @@ impl <R: Repository> WebsocketHandler<R> {
             duration=start.elapsed().as_millis(),
             // TODO: we may need to gather more metadata here like client_id and offset of the update
             skipped_message,
+            topic_id=self.topic_id.as_hyphenated().to_string(),
+            user_id=self.user_id.as_hyphenated().to_string(),
+            client_id=self.client_id,
             "completed writer hot path loop",
         );
         return Ok(());

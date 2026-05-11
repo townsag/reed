@@ -387,17 +387,23 @@ impl <R: Repository> WebsocketHandler<R> {
         update: UpdateMessage, 
         websocket_sender: &mut SplitSink<WebSocket, Message>
     ) -> Result<(), TaskError> {
-        if *update.key() == self.client_id {
-            event!(Level::INFO, "skipping message: {:?}", update);
-            // TODO: how come hyphenated does not consume self?
-            // TODO: check that this does what I think it does, can continue be used
-            //       inside of a tokio select statement
-            return Ok(());
+        let start = Instant::now();
+        let mut skipped_message = true;
+        if *update.key() != self.client_id {
+            let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
+            // TODO: batch read messages from the broker queue, use try receive
+            // TODO: batch send messages, concatenate many broker messages into one ws message
+            websocket_sender.send(ws_message).await?;
+            skipped_message = false;
         }
-        let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
-        // TODO: batch read messages from the broker queue, use try receive
-        // TODO: batch send messages, concatenate many broker messages into one ws message
-        websocket_sender.send(ws_message).await?;
+        event!(
+            name: "writer_hot_path_canonical_log_line",
+            Level::INFO,
+            duration=start.elapsed().as_millis(),
+            // TODO: we may need to gather more metadata here like client_id and offset of the update
+            skipped_message,
+            "completed writer hot path loop",
+        );
         return Ok(());
     }
 

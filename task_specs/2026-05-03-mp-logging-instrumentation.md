@@ -47,7 +47,7 @@
     - [ ] transition from client sync step one to server sync step two 
     - [ ] transition from client sync step two message to writer hot path
     - [x] read hot path loop
-    - [ ] write hot path loop
+    - [x] write hot path loop
 - [ ] aggregations over canonical log lines
     - [ ] transition from client sync step one to server sync step two 
     - [ ] transition from client sync step two message to writer hot path

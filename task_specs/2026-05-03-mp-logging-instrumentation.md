@@ -43,13 +43,16 @@
 
 
 ## Tasks:
-- [x] this task is blocked by the containerize message proxy task
-- [x] add clickstack resources to the docker compose file for the clickstack observability subsystem
-    - [ ] decide on shared otel collector or clickstack specific collector
-        - what makes them different, is the clickstack specific collector compatible with the existing configuration that I have 
-            - clickstack collector dynamically receives exporter, receiver, processor configuration from hyperdx app
-            - clickstack collector creates opinionated schemas in clickhouse db on startup
-Save these sub-tasks for the feat/mp-logging-instrumentation task
+- [ ] manual logging instrumentation
+    - [x] transition from client sync step one to server sync step two and writer hot path
+    - [x] transition from client sync step two message to reader hot path
+    - [x] read hot path loop
+    - [x] write hot path loop
+- [ ] aggregations over canonical log lines
+    - [ ] transition from client sync step one to server sync step two 
+    - [ ] transition from client sync step two message to writer hot path
+    - [ ] read hot path loop
+    - [ ] write hot path loop
 - [ ] add sqlx library instrumentation
     - https://docs.rs/sqlx-tracing/latest/sqlx_tracing/
 - [ ] add axum otel library instrumentation
@@ -112,65 +115,12 @@ Save these sub-tasks for the feat/mp-logging-instrumentation task
         - this can be overcome by including information like start time etc in the message that is sent from one server to another
         - ex: if an event is produced on one machine, how long until all of that machines peers finish processing that event
         - can spans be created that span multiple machines?
-- clickstack implementation:
-    - source for clickstack yaml
-        - https://github.com/ClickHouse/ClickStack/blob/main/docker-compose.yml
-    - clickhouse exporter for otel collector contrib
-        - https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/exporter/clickhouseexporter/README.md
-    - clickstack otel collector config.yaml
-        - https://github.com/hyperdxio/hyperdx/blob/main/docker/otel-collector/config.yaml
-    - healthcheck extension
-        - https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/extension/healthcheckextension/README.md
-    - schemas:
-        - https://github.com/ClickHouse/clickhouse-docs/blob/main/docs/use-cases/observability/clickstack/ingesting-data/schemas.md
 
 ## Resources (observability instrumentation):
-- tracing library docs:
-    - https://docs.rs/tracing/latest/tracing/
-    - https://docs.rs/tracing/latest/tracing/struct.Span.html#in-asynchronous-code
-- send events to a logging backend
-    - https://docs.rs/opentelemetry-appender-tracing/0.31.1/opentelemetry_appender_tracing/
-    - this crate treats all events created with the tracing event! macro (etc.) as logs that are exported to your logging backend
-    - this will duplicate the event if the event is already being exported toT
-- configure the tracing subscriber
-    - this includes filters as well as multiple layers
-    - https://docs.rs/tracing-subscriber/latest/tracing_subscriber/index.html
-- send spans to a tracing backend:
-    - https://docs.rs/tracing-opentelemetry/latest/tracing_opentelemetry/#feature-flags
-- prevent the telemetry-induced-telemetry bug:
-    - https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-otlp/examples/basic-otlp/src/main.rs
-    - otel sdk depends on components that themselves have tracing instrumentation
-- example for adding api key to your gRPC call
-    - https://github.com/instana/instana-opentelemetry-rust/blob/main/opentelemetry-otlp/examples/basic-otlp/README.md
-- how to attach a docker compose service to a network managed by a different docker compose stack
-    - https://docs.docker.com/compose/how-tos/networking/#use-an-existing-network
-- opinionated framework for otel sdk init:
-    - TODO: adopt this, it is great
-    - https://crates.io/crates/init-tracing-opentelemetry
-- sdk examples:
-    - https://github.com/davidB/tracing-opentelemetry-instrumentation-sdk/blob/main/examples/axum-otlp/src/main.rs
+
 
 ## Cleanup:
 - add this:
     `cargo clippy -- -D warnings -D clippy::pedantic`
 
 ## Testing:
-- run the clickstack telemetry subsystem:
-```bash
-docker compose -f docker-compose-clickstack.yml --env-file docker/envs/clickstack-subsytem.env up
-```
-- follow the steps here to create an account and access the ingestion api key for hyperdx
-    - https://clickhouse.com/docs/use-cases/observability/clickstack/deployment/docker-compose
-- add the ingestion api key to the mp-subsystem.env file
-- run the message proxy subsystem 
-```bash
-docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env build
-docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env up
-```
-- have a simple interaction using the tui
-```bash
-cd message_proxy/
-cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 2 2> error2.log
-```
-- observe the logs associated with your conversation in the ui:
-`http://localhost:8080/`

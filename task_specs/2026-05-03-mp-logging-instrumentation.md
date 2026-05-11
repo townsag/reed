@@ -44,7 +44,7 @@
 
 ## Tasks:
 - [ ] manual logging instrumentation
-    - [ ] transition from client sync step one to server sync step two and writer hot path
+    - [x] transition from client sync step one to server sync step two and writer hot path
     - [x] transition from client sync step two message to reader hot path
     - [x] read hot path loop
     - [x] write hot path loop

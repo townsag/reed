@@ -49,7 +49,7 @@ use tracing::{event, Level};
 enum ReaderEvent {
     // ClosedByClient,
     // ClosedByServer,
-    ClientSyncStep1(Vec<u8>),
+    ClientSyncStep1(Vec<u8>, Instant),
 }
 
 #[derive(Clone,Debug)]
@@ -193,12 +193,13 @@ impl <R: Repository> WebsocketHandler<R> {
     fn forward_client_sync_step_one(
         sync_sender_opt: &mut Option<Sender<ReaderEvent>>,
         state_vector: StateVector,
+        start: Instant,
     ) -> Result<(), TaskError>{
         // sync step one messages get processed by the writer
         // TODO: may need some error handling code here in the case that 
         // the client receiver has already been dropped
         if let Some(sync_sender) = sync_sender_opt.take() {
-            sync_sender.send(ReaderEvent::ClientSyncStep1(state_vector.encode_v1()))
+            sync_sender.send(ReaderEvent::ClientSyncStep1(state_vector.encode_v1(), start))
                 .map_err(TaskError::ReaderToWriterSendError)?;
         }
         Ok(())
@@ -314,8 +315,8 @@ impl <R: Repository> WebsocketHandler<R> {
                     return Ok(());
                 },
                 result = websocket_receiver.next() => match decode_helper(result).await {
-                    Decoded::Valid(SyncMessage::SyncStep1(sv), _start) => {
-                        let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv);
+                    Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
+                        let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
                     Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update), start) => {
                         break self.process_client_sync_step_two(
@@ -343,10 +344,10 @@ impl <R: Repository> WebsocketHandler<R> {
                     return Ok(());
                 },
                 result = websocket_receiver.next() => match decode_helper(result).await {
-                    Decoded::Valid(SyncMessage::SyncStep1(sv), _start) => {
-                        let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv);
+                    Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
+                        let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
-                    Decoded::Valid(SyncMessage::SyncStep2(_), _start) => { 
+                    Decoded::Valid(SyncMessage::SyncStep2(_), _) => { 
                         /* if it is a sync step two message, ignore it. 
                         We must have already processed the client sync 
                         step two message in order to get to the reader hot path */ 
@@ -377,6 +378,7 @@ impl <R: Repository> WebsocketHandler<R> {
         &self,
         writer: Writer<WriterAwaitingHandshake>,
         encoded_sv: Vec<u8>,
+        start: Instant,
     ) -> Result<(Writer<WriterHotPath>, Vec<u8>), TaskError> {
         let pairs = {
         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
@@ -386,12 +388,19 @@ impl <R: Repository> WebsocketHandler<R> {
             &pairs, self.topic_id,
         ).await?;
         let mut decoded_updates = Vec::<Update>::new();
-        for encoded_update in happens_after_updates {
+        for encoded_update in &happens_after_updates {
             decoded_updates.push(Update::decode_v1(&encoded_update)?)
         }
         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
         let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
             client_state_vector, decoded_updates
+        );
+        event!(
+            name: "writer_client_sync_step_one_canonical_log_line",
+            Level::INFO,
+            duration=start.elapsed().as_millis(),
+            count_updates=happens_after_updates.len(),
+            "received client sync step one message and constructed server sync step twoZ, transitioning writer from handshake to hot path"
         );
         
         Ok((hot_path_writer, decoded_bulk_update.encode_v1()))
@@ -448,8 +457,8 @@ impl <R: Repository> WebsocketHandler<R> {
                     return Ok(());
                 },
                 result = sync_receiver => match result {
-                    Ok(ReaderEvent::ClientSyncStep1(encoded_sv)) => {
-                        break self.process_client_sync_step_one(writer, encoded_sv).await?;
+                    Ok(ReaderEvent::ClientSyncStep1(encoded_sv, start)) => {
+                        break self.process_client_sync_step_one(writer, encoded_sv, start).await?;
                     },
                     Err(_) => {
                         // the sync channel returning none means that the channel has been closed

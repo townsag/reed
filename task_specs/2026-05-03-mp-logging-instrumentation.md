@@ -43,22 +43,26 @@
 
 
 ## Tasks:
-- [ ] manual logging instrumentation
+- [x] manual logging instrumentation
+    - [x] generate server sync step one message
     - [x] transition from client sync step one to server sync step two and writer hot path
     - [x] transition from client sync step two message to reader hot path
     - [x] read hot path loop
     - [x] write hot path loop
-- [ ] aggregations over canonical log lines
-    - [ ] transition from client sync step one to server sync step two 
-    - [ ] transition from client sync step two message to writer hot path
-    - [ ] read hot path loop
-    - [ ] write hot path loop
-- [ ] add sqlx library instrumentation
-    - https://docs.rs/sqlx-tracing/latest/sqlx_tracing/
-- [ ] add axum otel library instrumentation
-    - https://crates.io/crates/axum-tracing-opentelemetry
-- [ ] add websocket message canonical-log-line for reader and writer tasks
-- [ ] add tail sampling 
+- [x] aggregations over canonical log lines
+    - [x] transition from client sync step one to server sync step two 
+    - [x] transition from client sync step two message to writer hot path
+    - [x] read hot path loop
+    - [x] write hot path loop
+    - [x] how long does it take to create the server sync step one message 
+    - [x] how many bytes of operations are we processing
+    - [x] how big is the average operation
+- save these tasks for tracing instrumentation
+    - add sqlx library instrumentation
+        - https://docs.rs/sqlx-tracing/latest/sqlx_tracing/
+    - add axum otel library instrumentation
+        - https://crates.io/crates/axum-tracing-opentelemetry
+    - add tail sampling 
 
 ## Resources (observability platform):
 - log lines:
@@ -109,7 +113,13 @@
         - wide events on clickstack
     - https://clickhouse.com/blog/evolution-of-sql-based-observability-with-clickhouse
         - more wide events on clickstack
-- Json support for hyperdx is deprecated
+- Latency metrics are lying
+    - you cannot average percentiles
+    - if each user makes 100 requests and waits for all of them, the average user experiences the .99 percentile latency
+    - coordinated omission
+    - we cant have nice things
+    - measure request time not service time
+        - in the absence of measuring request time, be explicit that we are only measuring service time
 - Key insights:
     - metrics data that is calculated on the server has no visibility into the context required to calculate aggregations over processes that span multiple servers
         - this can be overcome by including information like start time etc in the message that is sent from one server to another

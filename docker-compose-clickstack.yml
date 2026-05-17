@@ -27,7 +27,7 @@ services:
     networks:
       - telemetry
   otel-collector:
-    image: ${CH_IMAGE_REPO}/${NEXT_OTEL_COLLECTOR_IMAGE_NAME_DOCKERHUB}:${IMAGE_VERSION}
+    image: ${CH_IMAGE_REPO}/${NEXT_OTEL_COLLECTOR_IMAGE_NAME_DOCKERHUB}:${IMAGE_NIGHTLY_TAG}
     environment:
       CLICKHOUSE_ENDPOINT: "tcp://ch-server:9000?dial_timeout=10s"
       HYPERDX_OTEL_EXPORTER_CLICKHOUSE_DATABASE: ${HYPERDX_OTEL_EXPORTER_CLICKHOUSE_DATABASE}
@@ -54,7 +54,7 @@ services:
       app:
         condition: service_started
   app:
-    image: ${HDX_IMAGE_REPO}/${IMAGE_NAME_DOCKERHUB}:${IMAGE_VERSION}
+    image: ${HDX_IMAGE_REPO}/${IMAGE_NAME_DOCKERHUB}:${IMAGE_NIGHTLY_TAG}
     ports:
       - ${HYPERDX_API_PORT}:${HYPERDX_API_PORT}
       - ${HYPERDX_APP_PORT}:${HYPERDX_APP_PORT}

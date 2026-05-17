@@ -236,8 +236,10 @@ impl <R: Repository> WebsocketHandler<R> {
         };
         // if the message had new operations in it, write the message to the database
         let mut skipped_persistence = true;
+        let mut update_size_bytes = 0;
         if let Some(new_offset) = new_offset {
             skipped_persistence = false;
+            update_size_bytes = encoded_update.len();
             self.repo.write_operation(
                 self.topic_id, self.user_id, self.client_id, 
                 new_offset, &encoded_update
@@ -254,6 +256,7 @@ impl <R: Repository> WebsocketHandler<R> {
             last_offset_from_client=new_offset,
             duration_ns=start.elapsed().as_nanos(),
             skipped_persistence,
+            update_size_bytes,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
@@ -299,7 +302,7 @@ impl <R: Repository> WebsocketHandler<R> {
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
-            "completed reader hot path loop",
+            "reader_hot_path_canonical_log_line",
         );
         return Ok(Some(new_offset));
     }
@@ -370,15 +373,26 @@ impl <R: Repository> WebsocketHandler<R> {
             }
         }
     }
-    /*
-    CHECKPOINT:
-    - you were in the middle of decomposing the reader and writer tasks into methods on the WebsocketHandler struct
-    - decompose the write task into methods on the WebsocketHandler
-    - The reason that you are making this change is because separating the handling of each websocket message type 
-      into multiple functions allows us to easily instrument each function with async tracing instrumentation. Furthermore,
-      as the logging boilerplate for each operation type proliferates, it will be nice for them to be decomposed so
-      it's not like looking at one unmanageable wall of text
-     */
+    
+    async fn send_server_sync_step_one(
+        &self,
+        websocket_sender: &mut SplitSink<WebSocket, Message>,
+    ) -> Result<(), TaskError> {
+        let start = Instant::now();
+        let mut _last_received_offset = self.repo.read_last_received_offset(self.client_id).await?;
+        let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, self.client_id);
+        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
+        event!(
+            name: "server_sync_step_one_canonical_log_line",
+            Level::INFO,
+            duration_ns=start.elapsed().as_nanos(),
+            topic_id=self.topic_id.as_hyphenated().to_string(),
+            user_id=self.user_id.as_hyphenated().to_string(),
+            client_id=self.client_id,
+            "server_sync_step_one_canonical_log_line",
+        );
+        Ok(())
+    }
 
     async fn process_client_sync_step_one(
         &self,
@@ -409,7 +423,7 @@ impl <R: Repository> WebsocketHandler<R> {
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
-            "received client sync step one message and constructed server sync step twoZ, transitioning writer from handshake to hot path"
+            "received client sync step one message and constructed server sync step two, transitioning writer from handshake to hot path"
         );
         
         Ok((hot_path_writer, decoded_bulk_update.encode_v1()))
@@ -438,7 +452,7 @@ impl <R: Repository> WebsocketHandler<R> {
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
-            "completed writer hot path loop",
+            "writer_hot_path_canonical_log_line",
         );
         return Ok(());
     }
@@ -450,9 +464,7 @@ impl <R: Repository> WebsocketHandler<R> {
         sync_receiver: Receiver<ReaderEvent>,
         cancel_token: CancellationToken,
     ) -> Result<(), TaskError> {
-        let mut _last_received_offset = self.repo.read_last_received_offset(self.client_id).await?;
-        let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, self.client_id);
-        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
+        self.send_server_sync_step_one(&mut websocket_sender).await?;
 
         // create an instance of the writer state
         let writer = Writer::new(

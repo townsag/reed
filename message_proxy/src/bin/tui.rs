@@ -29,6 +29,7 @@ struct EditorState<'a> {
     text: TextRef,
 }
 
+#[derive(Debug)]
 struct Config {
     hostname: String,
     topic_id: Uuid,
@@ -237,17 +238,6 @@ impl EditorState<'_> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /*
-    CHECKPOINT:
-    - you were here
-    - when creating a tui process, we are sending a client id to the server but the client id that we are using
-      to create operations is different than that client id
-    - we need to manually seed the yrs doc with the correct client id so that we can have alignment between the 
-      client id used in the query parameter and the client id in the operation messages
-    - factor out the config parsing code into its own struct and method
-        - build
-        - dump connection url
-     */
     let args: Vec<String> = env::args().collect();
     let config = Config::build(&args).unwrap_or_else(|e| {
         eprintln!("failed to parse string with {e}");

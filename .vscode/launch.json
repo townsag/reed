@@ -9,7 +9,7 @@
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceRoot}/message_proxy/target/debug/tui",
-            "args": ["ws://localhost:3000/ws/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000001?client_id=1"],
+            "args": ["localhost:3000", "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000001", "1"],
             "stdio": [null, null, "${workspaceRoot}/message_proxy/error.log"],
             "cwd": "${workspaceRoot}"
         },

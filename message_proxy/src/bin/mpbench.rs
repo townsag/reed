@@ -290,12 +290,13 @@ async fn process_events(
                     },
                     None => {
                         eprintln!("text representation: {}", state.get_representation());
-                        return Err(anyhow!("received none from event channel, indicating event spawning task panicked"));
+                        // return Err(anyhow!("received none from event channel, indicating event spawning task panicked")); 
+                        return Ok(state.get_count_local_ops());
                     },
                 },
                 _ = cancel.cancelled() => {
                     eprintln!("text representation: {}", state.get_representation());
-                    return Ok(());
+                    return Ok(state.get_count_local_ops());
                 },
             }
         }
@@ -326,7 +327,7 @@ impl ClientConfig {
 async fn pseudo_client(
     config: ClientConfig,
     cancel: CancellationToken,
-) -> Result<()> {
+) -> Result<Vec<u32>> {
     // spawn a task that will generate events
     let (event_sender, event_receiver) = mpsc::channel(100);
     let mut set = JoinSet::new();
@@ -337,11 +338,15 @@ async fn pseudo_client(
     // this second task should own the websocket connection, the document state, and the receiver
     // for the channel the first task published events to
     set.spawn(process_events(config, event_receiver, cancel));
+
+    let mut counts = vec![];
     while let Some(result) = set.join_next().await {
-        eprintln!("result: {:?}", result);
+        if let Ok(Ok(count)) = result {
+            counts.push(count);
+        }
     }
 
-    Ok(())
+    Ok(counts)
 }
 
 /*
@@ -377,7 +382,8 @@ async fn main() -> Result<()> {
     // use a timer to kill the pseudo clients after length seconds has been reached
     time::sleep_until(finish_at).await;
     cancel.cancel();
-    set.join_all().await;
+    let result = set.join_all().await;
+    eprintln!("counts: {:?}", result);
     eprintln!("end time: {:?}", Instant::now());
     Ok(())
 }

@@ -238,17 +238,33 @@ impl <R: Repository> WebsocketHandler<R> {
         let mut skipped_persistence = true;
         let mut update_size_bytes = 0;
         if let Some(new_offset) = new_offset {
-            skipped_persistence = false;
-            update_size_bytes = encoded_update.len();
-            self.repo.write_operation(
-                self.topic_id, self.user_id, self.client_id, 
-                new_offset, &encoded_update
+            let last_received_offset = self.repo.read_last_received_offset(
+                self.topic_id,
+                self.client_id,
             ).await?;
-            // write the bulk update to the broadcast channel
-            let update_message = UpdateMessage{
-                client_id: self.client_id, payload: Arc::new(encoded_update),
-            };
-            broker_sender.send(update_message)?;
+            if last_received_offset.is_none_or(|x| x < new_offset) {
+                skipped_persistence = false;
+                update_size_bytes = encoded_update.len();
+                // here we should check if the update with this offset or higher is already in the
+                // database. If so, skip persisting this update because it contains redundant
+                // information
+                self.repo.write_operation(
+                    self.topic_id, self.user_id, self.client_id, 
+                    new_offset, &encoded_update
+                ).await?;
+                // write the bulk update to the broadcast channel
+                let update_message = UpdateMessage{
+                    client_id: self.client_id, payload: Arc::new(encoded_update),
+                };
+                broker_sender.send(update_message)?;
+            } else {
+                event!(
+                    Level::DEBUG,
+                    "skipping persisting this operation because the old offset ({:?}) and new offset ({}) are >=",
+                    last_received_offset,
+                    new_offset,
+                )
+            }
         }
         event!(
             name: "reader_client_sync_step_two_canonical_log_line",
@@ -379,7 +395,9 @@ impl <R: Repository> WebsocketHandler<R> {
         websocket_sender: &mut SplitSink<WebSocket, Message>,
     ) -> Result<(), TaskError> {
         let start = Instant::now();
-        let mut _last_received_offset = self.repo.read_last_received_offset(self.client_id).await?;
+        let mut _last_received_offset = self.repo.read_last_received_offset(
+            self.topic_id, self.client_id
+        ).await?;
         let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, self.client_id);
         websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
         event!(

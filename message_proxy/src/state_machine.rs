@@ -148,7 +148,7 @@ pub struct Reader <S: ReaderState, R: Repository> {
 impl<R: Repository> Reader<ReaderAwaitingHandshake, R> {
     pub async fn new(repo: R, topic_id: Uuid, user_id: Uuid, client_id: u64) -> Result<Self, Box<dyn Error>> {
         // read the last received update offset from this client from the database
-        let last_received_offset = repo.read_last_received_offset(client_id).await?.unwrap_or(0);
+        let last_received_offset = repo.read_last_received_offset(topic_id, client_id).await?.unwrap_or(0);
         // create a reader instance and return it
         Ok(Reader{
             topic_id, user_id, client_id, last_received_offset, repo, state: ReaderAwaitingHandshake,

@@ -38,7 +38,6 @@
 ## Technical Spec:
 - introduce ClickStack observability
 - add opentelemetry tracing to the message proxy service
-- add opentelemetry tracing to the tui client
 - use the "log lines" pattern from stripe so that we can dynamically query logs to derive metrics without needing to know the metrics ahead of time
 
 
@@ -57,12 +56,19 @@
     - [x] how long does it take to create the server sync step one message 
     - [x] how many bytes of operations are we processing
     - [x] how big is the average operation
-- save these tasks for tracing instrumentation
+- save these tasks for tracing instrumentation:
+    - add opentelemetry tracing to the tui client
     - add sqlx library instrumentation
         - https://docs.rs/sqlx-tracing/latest/sqlx_tracing/
     - add axum otel library instrumentation
         - https://crates.io/crates/axum-tracing-opentelemetry
-    - add tail sampling 
+    - add tail sampling
+- dashboard wishlist:
+    - total service time from client to client
+        - include the received time in the message that is broadcast between tasks / instances 
+        - calculate the total service time upon writing to the websocket connection
+    - message fan out
+        - this is probably best done as an inner join using the reader and writer hot path canonical log line
 
 ## Resources (observability platform):
 - log lines:

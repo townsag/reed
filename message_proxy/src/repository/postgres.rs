@@ -93,10 +93,15 @@ impl Repository for PgRepo {
             Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
         }
     }
-    async  fn read_last_received_offset(&self, client_id:u64) -> Result<Option<u32>,RepoError> {
+    async  fn read_last_received_offset(
+        &self,
+        topic_id: uuid::Uuid,
+        client_id: u64,
+    ) -> Result<Option<u32>,RepoError> {
         let result = sqlx::query!(
             "SELECT MAX(operation_offset) AS max_offset FROM operations
-            WHERE client_id =$1",
+            WHERE topic_id =$1 AND client_id =$2",
+            topic_id,
             client_id as i64,
         ).fetch_one(&self.pool).await;
         match result{
@@ -114,7 +119,6 @@ impl Repository for PgRepo {
 #[cfg(test)]
 mod tests {
     use std::vec;
-
     use uuid::Uuid;
     use crate::repository::{
         RepoError, Repository,
@@ -204,7 +208,7 @@ mod tests {
             topic_id, user_id, client_id, 0, &operation_1
         ).await?;
 
-        let last_offset = repo.read_last_received_offset(client_id).await?;
+        let last_offset = repo.read_last_received_offset(topic_id, client_id).await?;
 
         assert_eq!(last_offset, Some(0));
         Ok(())
@@ -212,8 +216,27 @@ mod tests {
     #[sqlx::test]
     async fn test_last_offset_not_found(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let repo = PgRepo::new(pool);
-        let last_offset = repo.read_last_received_offset(1).await?;
+        let last_offset = repo.read_last_received_offset(Uuid::nil(), 1).await?;
         assert_eq!(last_offset, None);
+        Ok(())
+    }
+    #[sqlx::test]
+    async fn test_other_topic_client(pool: Pool<Postgres>) -> Result<(), RepoError> {
+        let repo = PgRepo::new(pool);
+        let (topic_id_a, topic_id_b, user_id, client_id) = (
+            Uuid::new_v4(), Uuid::new_v4(), Uuid::nil(), 1 as u64,
+        );
+        let operation_1: Vec<u8> = vec![1,2,3];
+        // write an operation at offset one on the first topic
+        repo.write_operation(topic_id_a, user_id, client_id, 0, &operation_1).await?;
+        // verify that the operation offset can be read on the first topic
+        let result = repo.read_last_received_offset(topic_id_a, client_id).await?;
+        assert_eq!(result, Some(0));
+        // try to read that operation on the second topic
+        let result = repo.read_last_received_offset(topic_id_b, client_id).await?;
+        // verify that the read operation is not found
+        assert_eq!(result, None);
+
         Ok(())
     }
 }

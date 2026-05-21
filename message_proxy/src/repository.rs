@@ -96,7 +96,7 @@ pub trait Repository: Send + Sync + Clone + 'static {
         payload: &[u8],
     ) -> Result<(), RepoError>;
     async fn read_operations_after(&self, state_vector: &[(u64, u32)], topic_id: Uuid) -> Result<Vec<Vec<u8>>, RepoError>;
-    async fn read_last_received_offset(&self, client_id: u64) -> Result<Option<u32>, RepoError>;
+    async fn read_last_received_offset(&self, topic_id: Uuid, client_id: u64) -> Result<Option<u32>, RepoError>;
 }
 
 // hopefully when we want to stub out the repository implementation when performing

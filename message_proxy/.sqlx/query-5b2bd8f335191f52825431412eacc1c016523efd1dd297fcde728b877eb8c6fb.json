@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT MAX(operation_offset) AS max_offset FROM operations\n            WHERE client_id =$1",
+  "query": "SELECT MAX(operation_offset) AS max_offset FROM operations\n            WHERE topic_id =$1 AND client_id =$2",
   "describe": {
     "columns": [
       {
@@ -11,6 +11,7 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Int8"
       ]
     },
@@ -18,5 +19,5 @@
       null
     ]
   },
-  "hash": "beb37c1cbddfe92c5b1c6e618288ee52de8fde94f14b2f7498c4e4ba4c1205eb"
+  "hash": "5b2bd8f335191f52825431412eacc1c016523efd1dd297fcde728b877eb8c6fb"
 }

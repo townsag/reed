@@ -1,0 +1,50 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  # bearertokenauth:
+  #   token: ${env:HYPERDX_INGESTION_KEY}
+
+receivers:
+  postgresql:
+    endpoint: ${env:POSTGRES_HOST}:${env:POSTGRES_PORT}
+    transport: tcp
+    username: ${env:POSTGRES_USER}
+    password: ${env:POSTGRES_PASSWORD}
+    databases:
+      - ${env:POSTGRES_DATABASE}
+    collection_interval: 10s
+    events:
+      db.server.query_sample:
+        enabled: true
+      db.server.top_query:
+        enabled: true
+    query_sample_collection:
+      max_rows_per_query: 100
+    top_query_collection:
+      max_rows_per_query: 100
+      top_n_query: 100
+      collection_interval: 60s
+    tls:
+      insecure: true
+
+exporters:
+  otlp_grpc:
+    endpoint: ${env:OTEL_COLLECTOR_GATEWAY_OTLP_ENDPOINT}
+    sending_queue:
+      batch:
+    # For the dev environment, use http to send the data to the gateway role instance of the otel
+    # collector because that instance does not currently have mtls set up
+    # In the production deployment we will update this to use tls
+    # auth:
+    #   authenticator: bearertokenauth
+    tls:
+      insecure: true
+    headers:
+      Authorization: ${env:HYPERDX_INGESTION_KEY}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [postgresql]
+      exporters: [otlp_grpc]

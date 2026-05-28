@@ -10,12 +10,15 @@
     - [x] add postgres metrics to clickstack
         - the clickhouse/clickstack-otel-collector does not natively have the `postgresqlreceiver` extension installed
             - https://github.com/hyperdxio/hyperdx/blob/main/packages/otel-collector/builder-config.yaml
-        - [ ] create a separate otel collector that scrapes postgres for metrics and pushes those metrics to the clickstack otel collector otlp endpoint
+        - [x] create a separate otel collector that scrapes postgres for metrics and pushes those metrics to the clickstack otel collector otlp endpoint
     - [ ] visualize postgres stats
-    - [ ] add sqlx library instrumentation
+    - [x] add sqlx library instrumentation
         - https://docs.rs/sqlx-tracing/latest/sqlx_tracing/
+        - turns out this is just tracing, not metrics
     - [ ] add axum otel library instrumentation
         - https://crates.io/crates/axum-tracing-opentelemetry
+    - [x] add manual metrics instrumentation to ws portion
+    - [x] add manual metrics instrumentation to the repo portion
 - [ ] if postgres write through put + coordination and metadata overhead associated with many writes is the reason that we have high write latency, fix the problem by batching at the task level and the instance level
     - [ ] optimistically read operation messages from the websocket until there are no more operation messages
     - [ ] update the repo abstraction to support submitting writes as part of a larger batch split between async tasks
@@ -31,3 +34,9 @@
 - configuring the `postgresqlreceiver` receiver
     - https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/postgresqlreceiver
     - -- In postgresql.conf -- shared_preload_libraries = 'pg_stat_statements'
+- otel custom metrics instrumentation example:
+    - https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-otlp/examples/basic-otlp/src/main.rs
+- alternative metrics instrumentation tool:
+    - https://docs.rs/tracing-opentelemetry/latest/tracing_opentelemetry/struct.MetricsLayer.html
+    - https://crates.io/crates/init-tracing-opentelemetry#Metrics
+    - ultimately decided not to go with this approach because it seems less flexible and complete than the otel sdk

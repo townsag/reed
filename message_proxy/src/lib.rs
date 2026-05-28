@@ -18,7 +18,10 @@ use crate::{
     broker::{Broker, BrokerBuilder}, 
     handlers::{handler, UpdateMessage}, 
     repository::{Repository, postgres::PgRepo},
-    config::{postgres, otel},
+    config::{
+      postgres,
+      otel::{self, MetricsWS},
+    },
 };
 use tracing::{
     event,
@@ -38,13 +41,14 @@ struct AppState<R: Repository> {
     // repository type at compile time and we are not going to use multiple repository types 
     // at the same time
     repo: R,
+    metrics_ws: MetricsWS,
 }
 
 pub async fn run() {
     // tracing_subscriber::fmt().with_max_level(LevelFilter::DEBUG).init();
     // when the provider guard is dropped at the end of the run scope the drop function
     // of the provider guard will flush the various providers
-    let _provider_guard = otel::init_otel();
+    let (_provider_guard, metrics_ws) = otel::init_otel();
     let pool = match postgres::build_postgres_pool().await {
         Ok(pool) => pool,
         Err(err) => {
@@ -60,7 +64,7 @@ pub async fn run() {
     let app = Router::new()
         .route("/", get(|| async {"hello world"}))
         .route("/ws/{topic_id}/{user_id}", any(handler::<PgRepo>))
-        .with_state(AppState::<PgRepo>{ broker, repo: PgRepo::new(pool) });
+        .with_state(AppState::<PgRepo>{ broker, repo: PgRepo::new(pool), metrics_ws });
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     event!(Level::INFO, "starting server on port 3000");

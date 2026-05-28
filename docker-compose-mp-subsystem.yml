@@ -71,6 +71,8 @@ services:
       - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
       - RUST_LOG=debug
       - RUST_BACKTRACE=full
+      - OTEL_METRIC_EXPORT_INTERVAL=5000
+      # ^ in milliseconds
     networks:
       - default
       - telemetry

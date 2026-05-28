@@ -1,11 +1,12 @@
 use std::env;
 
 use sqlx::{
-    Pool, Postgres, postgres::{
+    Postgres, postgres::{
         PgConnectOptions, PgPoolOptions
     },
     Error
 };
+use sqlx_tracing::{Pool};
 
 const MAX_CONNECTIONS: u32 = 10;
 
@@ -23,5 +24,7 @@ pub async fn build_postgres_pool() -> Result<Pool<Postgres>, Error> {
         .password(&password)
         .database(&database)
         .ssl_mode(sqlx::postgres::PgSslMode::Disable);
-    PgPoolOptions::new().max_connections(MAX_CONNECTIONS).connect_with(options).await
+    let pool = PgPoolOptions::new().max_connections(MAX_CONNECTIONS).connect_with(options).await?;
+
+    Ok(Pool::from(pool))
 }

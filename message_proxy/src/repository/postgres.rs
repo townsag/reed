@@ -1,7 +1,18 @@
-use sqlx::{Pool, Postgres};
+use opentelemetry::{InstrumentationScope, KeyValue, global, metrics::Histogram};
+use sqlx::{Postgres};
+use sqlx_tracing::Pool;
+use tokio::time::Instant;
 use std::clone::Clone;
 
 use crate::repository::{Repository, RepoError, ErrorKind, /* RepoMessage */ };
+
+
+// follow the convention defined here:
+// https://opentelemetry.io/docs/specs/semconv/db/database-metrics/#metric-dbclientoperationduration
+#[derive(Clone)]
+struct MetricsPGRepo {
+    db_client_operations_duration: Histogram<f64>,
+}
 
 // we want the PgRepo to be easily copyable so that it can be shared across async threads
 // create the struct such that the elements of the struct are easily copyable and the
@@ -9,32 +20,48 @@ use crate::repository::{Repository, RepoError, ErrorKind, /* RepoMessage */ };
 #[derive(Clone)]
 pub struct PgRepo {
     pool: Pool<Postgres>,
+    metrics_pg: MetricsPGRepo,
 }
 
 impl PgRepo {
     pub fn new(pool: Pool<Postgres>) -> Self {
-        return PgRepo { pool }
+        let scope = InstrumentationScope::builder("repository.pg")
+            .with_version("v0.0.1")
+            .build();
+        let meter = global::meter_with_scope(scope);
+        let db_client_operations_duration = meter
+            .f64_histogram("db.client.operation.duration")
+            .with_description("duration of database operations")
+            .with_boundaries(vec![ 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0 ])
+            .with_unit("second")
+            .build();
+        // {namespace}.{component}.{action_or_measurement}
+        // let write_update_message_duration = meter
+        //     .f64_histogram("repository.pg.write-update-message-duration")
+        //     .with_description("duration of time taken to write an update sync message")
+        //     .with_unit("ms")
+        //     // Setting boundaries is optional. By default, the boundaries are set to
+        //     // [0.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 250.0, 500.0, 750.0, 1000.0, 2500.0, 5000.0, 7500.0, 10000.0]
+        //     .build();
+        // let read_last_offset_duration = meter
+        //     .f64_histogram("repository.pg.read-last-offset-duration")
+        //     .with_description("duration of time taken to read the last offset written for a client on a topic")
+        //     .with_unit("ms")
+        //     .build();
+        // let read_operations_after_sv_duration = meter
+        //     .f64_histogram("repository.pg.read-operations-after-sv")
+        //     .with_description("duration of time taken to read operations after a state vector")
+        //     .with_unit("ms")
+        //     .build();
+        let metrics_pg = MetricsPGRepo {
+            db_client_operations_duration,
+        };
+
+        return PgRepo { pool, metrics_pg }
     }
 }
 
 impl Repository for PgRepo {
-    // async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError> {
-    //     let res = sqlx::query!(
-    //         "INSERT into messages (topic_id, user_id, message_offset, content) VALUES ($1, $2, $3, $4);",
-    //         message.topic_id,
-    //         message.user_id,
-    //         message.message_offset,
-    //         message.content,
-    //     ).execute(&self.pool)
-    //     .await;
-    //     match res {
-    //         Ok(_) => Ok(()),
-    //         Err(e @ sqlx::error::Error::InvalidArgument(_)) => {
-    //             Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
-    //         },
-    //         Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
-    //     }
-    // }
     async fn write_operation(
         &self,
         topic_id: uuid::Uuid,
@@ -42,7 +69,11 @@ impl Repository for PgRepo {
         client_id: u64,
         offset: u32,
         payload: &[u8],
+        // TODO: allow the calling code to specify if this operation is a sync step two 
+        // operation or an update type operation. This can be included in the attributes
+        // of the histogram
     ) -> Result<(),RepoError> {
+        let start = Instant::now();
         let res = sqlx::query!(
             "INSERT INTO operations (topic_id, user_id, client_id, operation_offset, payload) 
             VALUES ($1, $2, $3, $4, $5)",
@@ -55,17 +86,36 @@ impl Repository for PgRepo {
             offset as i64,
             payload,
         ).execute(&self.pool).await;
-        match res {
+        let ret = match res {
             Ok(_) => Ok(()),
             Err(e @ sqlx::error::Error::InvalidArgument(_)) => {
                 Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
             },
             Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
-        }
+        };
+
+        self.metrics_pg.db_client_operations_duration.record(
+            start.elapsed().as_secs_f64(), 
+            &[
+                KeyValue::new("db.system.name", "postgresql"),
+                KeyValue::new("db.operation.name", "INSERT"),
+                KeyValue::new("db.collection.name", "operations"),
+                // TODO: this should not be a magic string, we should read this upon creating the repo
+                KeyValue::new("db.namespace", "message_proxy"),
+                KeyValue::new("db.query.summary", "write the contents of an operation sync message"),
+                // TODO: extend this to read database returned error information on failure
+                // TODO: would prefer to do this without making any heap allocations
+                // KeyValue::new("error.type", "connection_timeout"),
+                // KeyValue::new("db.response.status_code", ),
+            ],
+        );
+
+        ret
     }
     async  fn read_operations_after(
         &self, state_vector: &[(u64,u32)], topic_id: uuid::Uuid,
     ) -> Result<Vec<Vec<u8> > ,RepoError> {
+        let start = Instant::now();
         let operations = sqlx::query!(
             "WITH version_vector AS(
                 SELECT * FROM UNNEST($1::bigint[], $2::bigint[])
@@ -83,7 +133,7 @@ impl Repository for PgRepo {
             &state_vector.iter().map(|(_, v)| *v as i64).collect::<Vec<i64>>(),
             topic_id,
         ).fetch_all(&self.pool).await;
-        match operations {
+        let ret = match operations {
             Ok(operations) => {
                 Ok(operations.into_iter().map(|op| op.payload).collect())
             },
@@ -91,20 +141,39 @@ impl Repository for PgRepo {
                 Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
             },
             Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
-        }
+        };
+
+        self.metrics_pg.db_client_operations_duration.record(
+            start.elapsed().as_secs_f64(), 
+            &[
+                KeyValue::new("db.system.name", "postgresql"),
+                KeyValue::new("db.operation.name", "SELECT"),
+                KeyValue::new("db.collection.name", "operations"),
+                // TODO: this should not be a magic string, we should read this upon creating the repo
+                KeyValue::new("db.namespace", "message_proxy"),
+                KeyValue::new("db.query.summary", "read the operations with a happens after relationship given a state vector"),
+                // TODO: extend this to read database returned error information on failure
+                // TODO: would prefer to do this without making any heap allocations
+                // KeyValue::new("error.type", "connection_timeout"),
+                // KeyValue::new("db.response.status_code", ),
+            ],
+        );
+
+        ret
     }
     async  fn read_last_received_offset(
         &self,
         topic_id: uuid::Uuid,
         client_id: u64,
     ) -> Result<Option<u32>,RepoError> {
+        let start = Instant::now();
         let result = sqlx::query!(
             "SELECT MAX(operation_offset) AS max_offset FROM operations
             WHERE topic_id =$1 AND client_id =$2",
             topic_id,
             client_id as i64,
         ).fetch_one(&self.pool).await;
-        match result{
+        let ret = match result{
             Ok(record) => {
                 Ok(record.max_offset.map(|o| {o as u32}))
             },
@@ -112,7 +181,25 @@ impl Repository for PgRepo {
                 Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
             },
             Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
-        }
+        };
+
+        self.metrics_pg.db_client_operations_duration.record(
+            start.elapsed().as_secs_f64(), 
+            &[
+                KeyValue::new("db.system.name", "postgresql"),
+                KeyValue::new("db.operation.name", "SELECT"),
+                KeyValue::new("db.collection.name", "operations"),
+                // TODO: this should not be a magic string, we should read this upon creating the repo
+                KeyValue::new("db.namespace", "message_proxy"),
+                KeyValue::new("db.query.summary", "read the offset of the last received operation given a client and topic"),
+                // TODO: extend this to read database returned error information on failure
+                // TODO: would prefer to do this without making any heap allocations
+                // KeyValue::new("error.type", "connection_timeout"),
+                // KeyValue::new("db.response.status_code", ),
+            ],
+        );
+
+        ret
     }
 }
 
@@ -125,12 +212,13 @@ mod tests {
         postgres::{PgRepo},
     };
     use sqlx::{Pool, Postgres};
+    use sqlx_tracing::{Pool as TracedPool};
 
     #[sqlx::test]
     async fn test_write_read_all_operations(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let (topic_id, user_id, client_id) = (Uuid::nil(), Uuid::nil(), 1 as u64);
     
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         let operation_1: Vec<u8> = vec![1,2,3];
         let operation_2: Vec<u8> = vec![4,5,6];
         // write two operations to the database
@@ -152,7 +240,7 @@ mod tests {
     async fn test_write_read_operations_after_offset(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let (topic_id, user_id, client_id) = (Uuid::nil(), Uuid::nil(), 1 as u64);
     
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         let operation_1: Vec<u8> = vec![1,2,3];
         let operation_2: Vec<u8> = vec![4,5,6];
         // write two operations to the database
@@ -171,7 +259,7 @@ mod tests {
     }
     #[sqlx::test]
     async fn test_write_read_operations_multi_client(pool: Pool<Postgres>) -> Result<(), RepoError> {
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         // the goal of this test is to validate that the version vector logic works when 
         // we have both missed operations from clients that we have seen operations for, and
         // missed operations from clients that we have not seen operations for
@@ -201,7 +289,7 @@ mod tests {
     async fn test_write_read_last_offset(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let (topic_id, user_id, client_id) = (Uuid::nil(), Uuid::nil(), 1 as u64);
     
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         let operation_1: Vec<u8> = vec![1,2,3];
         // write two operations to the database
         let _ = repo.write_operation(
@@ -215,14 +303,14 @@ mod tests {
     }
     #[sqlx::test]
     async fn test_last_offset_not_found(pool: Pool<Postgres>) -> Result<(), RepoError> {
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         let last_offset = repo.read_last_received_offset(Uuid::nil(), 1).await?;
         assert_eq!(last_offset, None);
         Ok(())
     }
     #[sqlx::test]
     async fn test_other_topic_client(pool: Pool<Postgres>) -> Result<(), RepoError> {
-        let repo = PgRepo::new(pool);
+        let repo = PgRepo::new(TracedPool::from(pool));
         let (topic_id_a, topic_id_b, user_id, client_id) = (
             Uuid::new_v4(), Uuid::new_v4(), Uuid::nil(), 1 as u64,
         );

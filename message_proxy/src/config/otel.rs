@@ -2,11 +2,13 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::{
     Resource,
     logs::SdkLoggerProvider,
-    metrics::SdkMeterProvider,
+    metrics::{PeriodicReader, SdkMeterProvider},
+    trace::SdkTracerProvider,
 };
 use opentelemetry_otlp::{
     LogExporter,
     MetricExporter,
+    SpanExporter,
     WithExportConfig,
     WithTonicConfig,
     tonic_types::metadata::MetadataMap,
@@ -14,15 +16,12 @@ use opentelemetry_otlp::{
 use opentelemetry::{
     InstrumentationScope,
     KeyValue,
-    global, metrics::{Counter, UpDownCounter},
+    global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
 };
 use tracing_subscriber::{self, EnvFilter, Layer, layer::{SubscriberExt}, util::SubscriberInitExt};
-use std::{env};
+use tracing_opentelemetry;
+use std::{env, time::Duration};
 
-pub struct ProviderGuard {
-    logger_provider: SdkLoggerProvider,
-    meter_provider: SdkMeterProvider,
-}
 
 #[derive(Clone)]
 pub struct MetricsWS {  
@@ -63,6 +62,13 @@ impl MetricsWS {
     }
 }
 
+pub struct ProviderGuard {
+    logger_provider: SdkLoggerProvider,
+    meter_provider: SdkMeterProvider,
+    tracer_provider: SdkTracerProvider,
+}
+
+
 impl ProviderGuard {
     // init the various sdk parts
     //  - init tracer
@@ -95,19 +101,39 @@ impl ProviderGuard {
         // I don't have to set the global logger provider here because the (rust) tracing library 
         // will be integrated with the otel sdk backend via the otel tracing bridge
 
+        let span_exporter = SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint.clone())
+            .with_metadata(map.clone())
+            .build()
+            .expect("failed to create span exporter");
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(resource.clone())
+            .with_batch_exporter(span_exporter)
+            .build();
+        // Set the global tracer provider using a clone of the tracer_provider.
+        // Setting global tracer provider is required if other parts of the application
+        // uses global::tracer() or global::tracer_with_version() to get a tracer.
+        // Cloning simply creates a new reference to the same tracer provider.
+        global::set_tracer_provider(tracer_provider.clone());
+
         let metrics_exporter = MetricExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .with_metadata(map)
             .build()
             .expect("failed to create metrics exporter");
+        let reader = PeriodicReader::builder(metrics_exporter)
+            .with_interval(Duration::from_secs(5))
+            .build();
         let meter_provider = SdkMeterProvider::builder()
             .with_resource(resource)
-            .with_periodic_exporter(metrics_exporter)
+            .with_reader(reader)
+            // .with_periodic_exporter(metrics_exporter)
             .build();
         global::set_meter_provider(meter_provider.clone());
 
-        ProviderGuard { logger_provider, meter_provider }
+        ProviderGuard { logger_provider, meter_provider, tracer_provider }
     }
 }
 impl Drop for ProviderGuard {
@@ -116,6 +142,7 @@ impl Drop for ProviderGuard {
         // TODO: add proper error handling here 
         let _ = self.logger_provider.shutdown();
         let _ = self.meter_provider.shutdown();
+        let _ = self.tracer_provider.shutdown();
     }
 }
 
@@ -151,10 +178,15 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
 
     // let level = filter_otel.max_level_hint();
     
+    // set up logging related otel <--> rust machinery
     let otel_logging_layer = OpenTelemetryTracingBridge::new(&providers.logger_provider)
         .with_filter(filter_otel.clone());
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_filter(filter_otel);
+
+    // set up tracing related otel <--> rust machinery
+    let tracer = providers.tracer_provider.tracer("mp-service");
+    let otel_tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     tracing_subscriber::registry()
         // add the layer to the tracing subscriber registry that forwards logs from the tracing subscriber
@@ -163,6 +195,11 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         // this tracing subscriber fmt layer sits at a higher level relative to the otel stdout log exporter
         // using this layer as opposed to the stdout exporter means fewer function calls and heap allocations
         .with(fmt_layer)
+        // this layer intercepts traces being sent to the rust tracing library and forwards them to the otel sdk
+        .with(otel_tracing_layer)
+        // Attempts to set self as the global default subscriber in the current scope, panicking if this fails.
+        // In this case the scope means the entire process, compared to using a tracing subscriber in a limited
+        // scope using closures
         .init();
 
     // create the metrics struct so that it may be passed around at the application level

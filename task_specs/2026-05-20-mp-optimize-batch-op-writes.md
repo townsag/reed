@@ -19,6 +19,9 @@
         - https://crates.io/crates/axum-tracing-opentelemetry
     - [x] add manual metrics instrumentation to ws portion
     - [x] add manual metrics instrumentation to the repo portion
+    - [x] add tracing for the hot path
+        - [x] add tracing exporter and tracer provider using the sdk
+        - [x] add the tracing_opentelemetry layer that allows us to intercept traces created by the tracing library and route them to the otel backend
 - [ ] if postgres write through put + coordination and metadata overhead associated with many writes is the reason that we have high write latency, fix the problem by batching at the task level and the instance level
     - [ ] optimistically read operation messages from the websocket until there are no more operation messages
     - [ ] update the repo abstraction to support submitting writes as part of a larger batch split between async tasks
@@ -36,7 +39,12 @@
     - -- In postgresql.conf -- shared_preload_libraries = 'pg_stat_statements'
 - otel custom metrics instrumentation example:
     - https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-otlp/examples/basic-otlp/src/main.rs
+    - https://github.com/open-telemetry/opentelemetry-rust/blob/main/examples/metrics-advanced/src/main.rs
 - alternative metrics instrumentation tool:
     - https://docs.rs/tracing-opentelemetry/latest/tracing_opentelemetry/struct.MetricsLayer.html
     - https://crates.io/crates/init-tracing-opentelemetry#Metrics
     - ultimately decided not to go with this approach because it seems less flexible and complete than the otel sdk
+- semantic conventions for database client metrics instrumentation
+    - https://opentelemetry.io/docs/specs/semconv/db/database-metrics/#metric-dbclientoperationduration
+- clickstack postgres monitoring instructions:
+    - https://clickhouse.com/docs/use-cases/observability/clickstack/integrations/postgresql-metrics#dashboards

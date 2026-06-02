@@ -3,6 +3,7 @@ use sqlx::{Postgres};
 use sqlx_tracing::Pool;
 use tokio::time::Instant;
 use std::clone::Clone;
+use tracing::instrument;
 
 use crate::repository::{Repository, RepoError, ErrorKind, /* RepoMessage */ };
 
@@ -62,6 +63,7 @@ impl PgRepo {
 }
 
 impl Repository for PgRepo {
+    #[instrument(skip(self,payload))]
     async fn write_operation(
         &self,
         topic_id: uuid::Uuid,
@@ -112,9 +114,10 @@ impl Repository for PgRepo {
 
         ret
     }
+    #[instrument(skip(self,state_vector),fields(count_updates))]
     async  fn read_operations_after(
         &self, state_vector: &[(u64,u32)], topic_id: uuid::Uuid,
-    ) -> Result<Vec<Vec<u8> > ,RepoError> {
+    ) -> Result<Vec<Vec<u8>> ,RepoError> {
         let start = Instant::now();
         let operations = sqlx::query!(
             "WITH version_vector AS(
@@ -135,6 +138,7 @@ impl Repository for PgRepo {
         ).fetch_all(&self.pool).await;
         let ret = match operations {
             Ok(operations) => {
+                tracing::Span::current().record("count_updates", operations.len());
                 Ok(operations.into_iter().map(|op| op.payload).collect())
             },
             Err(e @ sqlx::error::Error::InvalidArgument(_)) => {
@@ -161,6 +165,7 @@ impl Repository for PgRepo {
 
         ret
     }
+    #[instrument(skip(self),fields(last_received_offset))]
     async  fn read_last_received_offset(
         &self,
         topic_id: uuid::Uuid,
@@ -175,6 +180,7 @@ impl Repository for PgRepo {
         ).fetch_one(&self.pool).await;
         let ret = match result{
             Ok(record) => {
+                tracing::Span::current().record("last_received_offset", record.max_offset);
                 Ok(record.max_offset.map(|o| {o as u32}))
             },
             Err(e @ sqlx::error::Error::InvalidArgument(_)) => {

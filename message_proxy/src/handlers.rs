@@ -47,7 +47,7 @@ use crate::config::otel::{
 };
 use thiserror::Error;
 use serde;
-use tracing::{event, Level};
+use tracing::{Instrument, Level, event, info_span, instrument};
 
 #[derive(Debug)]
 enum ReaderEvent {
@@ -155,6 +155,7 @@ impl <R: Repository> WebsocketHandler<R> {
         WebsocketHandler { topic_id, user_id, client_id, repo, metrics_ws }
     }
 
+    #[instrument(skip_all)]
     fn forward_client_sync_step_one(
         sync_sender_opt: &mut Option<Sender<ReaderEvent>>,
         state_vector: StateVector,
@@ -225,6 +226,7 @@ impl <R: Repository> WebsocketHandler<R> {
         }
     }
 
+    #[instrument(skip_all)]
     async fn process_client_sync_step_two(
         &self,
         encoded_update: Vec<u8>,
@@ -301,6 +303,7 @@ impl <R: Repository> WebsocketHandler<R> {
         return Ok(new_offset);
     }
 
+    #[instrument(skip_all)]
     async fn reader_hot_path(
         &self,
         encoded_update: Vec<u8>,
@@ -342,6 +345,7 @@ impl <R: Repository> WebsocketHandler<R> {
         );
         return Ok(Some(new_offset));
     }
+
 
     async fn read(
         &self,
@@ -410,6 +414,7 @@ impl <R: Repository> WebsocketHandler<R> {
         }
     }
     
+    #[instrument(skip_all)]
     async fn send_server_sync_step_one(
         &self,
         websocket_sender: &mut SplitSink<WebSocket, Message>,
@@ -419,7 +424,9 @@ impl <R: Repository> WebsocketHandler<R> {
             self.topic_id, self.client_id
         ).await?;
         let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, self.client_id);
-        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
+        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into()))
+            .instrument(info_span!("send_sync_step_one_ws_message"))
+            .await?;
         event!(
             name: "server_sync_step_one_canonical_log_line",
             Level::INFO,
@@ -427,11 +434,13 @@ impl <R: Repository> WebsocketHandler<R> {
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
+            last_received_offset=_last_received_offset,
             "server_sync_step_one_canonical_log_line",
         );
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn process_client_sync_step_one(
         &self,
         writer: Writer<WriterAwaitingHandshake>,
@@ -467,6 +476,7 @@ impl <R: Repository> WebsocketHandler<R> {
         Ok((hot_path_writer, decoded_bulk_update.encode_v1()))
     }
 
+    #[instrument(skip_all,fields(skipped_message))]
     async fn write_hot_path_loop(
         &self,
         update: UpdateMessage, 
@@ -478,9 +488,12 @@ impl <R: Repository> WebsocketHandler<R> {
             let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
             // TODO: batch read messages from the broker queue, use try receive
             // TODO: batch send messages, concatenate many broker messages into one ws message
-            websocket_sender.send(ws_message).await?;
+            websocket_sender.send(ws_message)
+                .instrument(info_span!("send_update_ws_message"))
+                .await?;
             skipped_message = false;
         }
+        tracing::Span::current().record("skipped_message", skipped_message);
         event!(
             name: "writer_hot_path_canonical_log_line",
             Level::INFO,
@@ -536,8 +549,11 @@ impl <R: Repository> WebsocketHandler<R> {
             }
         };
         // send the bulk update over the websocket connection
+        // TODO: this should be happening inside of the process_client_sync_step_one function
         let ws_message = Message::Binary(SyncMessage::SyncStep2(bulk_update).encode_v1().into());
-        websocket_sender.send(ws_message).await?;
+        websocket_sender.send(ws_message)
+            .instrument(info_span!("send_server_sync_step_two_ws_message"))
+            .await?;
 
         loop {
             // we need to use this tokio select statement to prevent dangling write tasks
@@ -566,7 +582,8 @@ impl <R: Repository> WebsocketHandler<R> {
                             )));
                             return Err(TaskError::BrokerReceiveError(e));
                         },
-                        Err(BroadcastRVError::Lagged(_)) => {
+                        Err(BroadcastRVError::Lagged(count_missed)) => {
+                            event!(name: "lagged_broker_receiver", Level::WARN, count_missed);
                             // TODO: this is the case in which we missed some messages sent to this topic
                             //       by some fast senders. We should read the missed messages from the
                             //       database so that we can catch up

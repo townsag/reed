@@ -1,19 +1,73 @@
-// add a tracing subscriber that will map tracing outputs to the otel sdk backend
-//  - this is how we get traces and metrics
-
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::{
     Resource,
     logs::SdkLoggerProvider,
+    metrics::{PeriodicReader, SdkMeterProvider},
+    trace::SdkTracerProvider,
 };
-use opentelemetry_otlp::{LogExporter, WithExportConfig, WithTonicConfig, tonic_types::metadata::MetadataMap};
-use tracing::{warn};
+use opentelemetry_otlp::{
+    LogExporter,
+    MetricExporter,
+    SpanExporter,
+    WithExportConfig,
+    WithTonicConfig,
+    tonic_types::metadata::MetadataMap,
+};
+use opentelemetry::{
+    InstrumentationScope,
+    KeyValue,
+    global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
+};
 use tracing_subscriber::{self, EnvFilter, Layer, layer::{SubscriberExt}, util::SubscriberInitExt};
-use std::{env};
+use tracing_opentelemetry;
+use std::{env, time::Duration};
+
+
+#[derive(Clone)]
+pub struct MetricsWS {  
+    count_websocket_connections: UpDownCounter<i64>,
+    count_received_messages: Counter<u64>,
+    count_received_contents: Counter<u64>,
+}
+#[derive(Debug)]
+pub enum WSMessageType {
+    SyncStep1,
+    SyncStep2,
+    Update,
+    Error,
+}
+
+pub struct WsLifecycleGuard {
+    count_websocket_connections: UpDownCounter<i64>,
+}
+
+impl Drop for WsLifecycleGuard {
+    fn drop(&mut self) {
+        self.count_websocket_connections.add(-1, &[]);
+    }
+}
+
+impl MetricsWS {
+    pub fn ws_lifecycle_guard(&self) -> WsLifecycleGuard {
+        // TODO: add an attribute containing the hostname of this server
+        self.count_websocket_connections.add(1, &[]);
+        // I think this clone is fine because under the hood the UpDownCounter is just
+        // an Arc
+        WsLifecycleGuard { count_websocket_connections: self.count_websocket_connections.clone() }
+    }
+    pub fn record_received_ws_message(&self, size_bytes: usize, message_type: WSMessageType) {
+        let attributes = [KeyValue::new("message.type", format!("{:?}", message_type))];
+        self.count_received_messages.add(1, &attributes);
+        self.count_received_contents.add(size_bytes as u64, &attributes);
+    }
+}
 
 pub struct ProviderGuard {
     logger_provider: SdkLoggerProvider,
+    meter_provider: SdkMeterProvider,
+    tracer_provider: SdkTracerProvider,
 }
+
 
 impl ProviderGuard {
     // init the various sdk parts
@@ -28,33 +82,71 @@ impl ProviderGuard {
             .expect("failed to read HYPERDX_INGESTION_KEY from os env");
         let mut map = MetadataMap::with_capacity(1);
         map.insert("authorization", hyperdx_api_key.parse().unwrap());
+        // resource denotes the physical infra that created the telemetry
+        // this is where I would put things like pod number etc.
+        let resource = Resource::builder()
+            .with_service_name("message-proxy")
+            .build();
+
         let log_exporter = LogExporter::builder()
             .with_tonic()
-            .with_endpoint(endpoint)
-            .with_metadata(map)
+            .with_endpoint(endpoint.clone())
+            .with_metadata(map.clone())
             .build()
             .expect("failed to create log exporter");
         let logger_provider = SdkLoggerProvider::builder()
-            .with_resource(
-                Resource::builder()
-                    .with_service_name("message-proxy")
-                    .build(),
-            )
+            .with_resource(resource.clone())
             .with_batch_exporter(log_exporter)
             .build();
         // I don't have to set the global logger provider here because the (rust) tracing library 
         // will be integrated with the otel sdk backend via the otel tracing bridge
-        ProviderGuard { logger_provider }
+
+        let span_exporter = SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint.clone())
+            .with_metadata(map.clone())
+            .build()
+            .expect("failed to create span exporter");
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(resource.clone())
+            .with_batch_exporter(span_exporter)
+            .build();
+        // Set the global tracer provider using a clone of the tracer_provider.
+        // Setting global tracer provider is required if other parts of the application
+        // uses global::tracer() or global::tracer_with_version() to get a tracer.
+        // Cloning simply creates a new reference to the same tracer provider.
+        global::set_tracer_provider(tracer_provider.clone());
+
+        let metrics_exporter = MetricExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .with_metadata(map)
+            .build()
+            .expect("failed to create metrics exporter");
+        let reader = PeriodicReader::builder(metrics_exporter)
+            .with_interval(Duration::from_secs(5))
+            .build();
+        let meter_provider = SdkMeterProvider::builder()
+            .with_resource(resource)
+            .with_reader(reader)
+            // .with_periodic_exporter(metrics_exporter)
+            .build();
+        global::set_meter_provider(meter_provider.clone());
+
+        ProviderGuard { logger_provider, meter_provider, tracer_provider }
     }
 }
 impl Drop for ProviderGuard {
     // call flush / shutdown on all the providers that are wrapped by the provider guard
     fn drop(&mut self) {
+        // TODO: add proper error handling here 
         let _ = self.logger_provider.shutdown();
+        let _ = self.meter_provider.shutdown();
+        let _ = self.tracer_provider.shutdown();
     }
 }
 
-pub fn init_otel() -> ProviderGuard {
+pub fn init_otel() -> (ProviderGuard, MetricsWS) {
     let providers = ProviderGuard::new();
     // add a opentelemetry_appender_tracing tracing subscriber layer that will map tracing events 
     // to the otel backend
@@ -84,12 +176,17 @@ pub fn init_otel() -> ProviderGuard {
         .add_directive("opentelemetry_sdk=off".parse().unwrap());
         // .add_directive("reqwest=off".parse().unwrap());
 
-    let level = filter_otel.max_level_hint();
+    // let level = filter_otel.max_level_hint();
     
+    // set up logging related otel <--> rust machinery
     let otel_logging_layer = OpenTelemetryTracingBridge::new(&providers.logger_provider)
         .with_filter(filter_otel.clone());
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_filter(filter_otel);
+
+    // set up tracing related otel <--> rust machinery
+    let tracer = providers.tracer_provider.tracer("mp-service");
+    let otel_tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     tracing_subscriber::registry()
         // add the layer to the tracing subscriber registry that forwards logs from the tracing subscriber
@@ -98,9 +195,40 @@ pub fn init_otel() -> ProviderGuard {
         // this tracing subscriber fmt layer sits at a higher level relative to the otel stdout log exporter
         // using this layer as opposed to the stdout exporter means fewer function calls and heap allocations
         .with(fmt_layer)
+        // this layer intercepts traces being sent to the rust tracing library and forwards them to the otel sdk
+        .with(otel_tracing_layer)
+        // Attempts to set self as the global default subscriber in the current scope, panicking if this fails.
+        // In this case the scope means the entire process, compared to using a tracing subscriber in a limited
+        // scope using closures
         .init();
 
-    warn!("logging at level: {:?}", level);
-
-    providers
+    // create the metrics struct so that it may be passed around at the application level
+    // scope denotes logical information about the software running on physical hardware
+    // this is where I would put things like version number, git hash, library name, etc.
+    // let common_scope_attributes = vec![KeyValue::new("scope-key", "scope-value")];
+    let scope = InstrumentationScope::builder("message-proxy")
+        .with_version("v0.0.1")
+        .build();
+    let meter = global::meter_with_scope(scope);
+    // {namespace}.{component}.{action_or_measurement}
+    let count_websocket_connections = meter
+        .i64_up_down_counter("mp-service.ws.count-connected-clients")
+        .with_description("count of currently connected websocket clients for the operation proxy endpoint")
+        .build();
+    let count_received_messages = meter
+        .u64_counter("mp-service.ws.count-received-messages")
+        .with_description("count of websocket messages received")
+        .with_unit("message")
+        .build();
+    let count_received_contents = meter
+        .u64_counter("mp-service.ws.count-received-contents")
+        .with_description("count of bytes received across all websocket messages")
+        .with_unit("bytes")
+        .build();
+    let metrics_ws = MetricsWS {
+        count_websocket_connections,
+        count_received_messages,
+        count_received_contents,
+    };
+    (providers, metrics_ws)
 }

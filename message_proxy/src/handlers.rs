@@ -41,9 +41,13 @@ use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository, RepoError};
 use crate::AppState;
 use crate::state_machine::{Writer, WriterAwaitingHandshake, WriterHotPath};
+use crate::config::otel::{
+    MetricsWS,
+    WSMessageType,
+};
 use thiserror::Error;
 use serde;
-use tracing::{event, Level};
+use tracing::{Instrument, Level, event, info_span, instrument};
 
 #[derive(Debug)]
 enum ReaderEvent {
@@ -88,47 +92,6 @@ enum Decoded {
     Failure,
 }
 
-async fn decode_helper(
-    result: Option<Result<Message, Error>>, 
-) -> Decoded {
-    /*
-    This result can be one of these things:
-    - Binary websocket message
-        - when we get these we want to decode them into one of a few types of Sync Messages
-        - alternatively, if we fail to decode we want to close the connection 
-    - Closing frame websocket message
-        - when we get these we want to indicate to the writer that the websocket connection is closing
-    - Ping, Pong, Text websocket message
-        - we are not interested in these
-    - Err
-        - these indicate that there was an error buffering messages at the OS level
-        - when we get these we want to indicate to the writer that the websocket connection is closing
-    - None
-        - these indicate that the websocket connection has closed without a closing frame
-        - when we get these we want to indicate to the writer that the websocket connection is closing
-    */
-    event!(Level::INFO, "received ws message: {:?}", result);
-    let start = Instant::now();
-    match result {
-        Some(Ok(Message::Binary(bytes))) => {
-            event!(Level::INFO, "decoding message");
-            match SyncMessage::decode_v1(&bytes) {
-                Ok(sync_message) => {
-                    event!(Level::INFO, "decoded valid sync message: {:?}", sync_message);
-                    Decoded::Valid(sync_message, start)
-                },
-                Err(e) => {
-                    event!(Level::INFO, "failed to decode message with error: {e}");
-                    Decoded::Skip
-                },
-            }
-        },
-        Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
-            Decoded::Failure
-        },
-        Some(Ok(_)) => Decoded::Skip,
-    }
-}
 
 fn build_server_sync_step_1(
     last_received_offset: Option<u32>, client_id: u64,
@@ -178,6 +141,7 @@ struct WebsocketHandler<R: Repository> {
     user_id: Uuid,
     client_id: u64,
     repo: R,
+    metrics_ws: MetricsWS,
 }
 
 impl <R: Repository> WebsocketHandler<R> {
@@ -186,15 +150,17 @@ impl <R: Repository> WebsocketHandler<R> {
         user_id: Uuid,
         client_id: u64,
         repo: R,
+        metrics_ws: MetricsWS,
     ) -> Self {
-        WebsocketHandler { topic_id, user_id, client_id, repo }
+        WebsocketHandler { topic_id, user_id, client_id, repo, metrics_ws }
     }
 
+    #[instrument(skip_all)]
     fn forward_client_sync_step_one(
         sync_sender_opt: &mut Option<Sender<ReaderEvent>>,
         state_vector: StateVector,
         start: Instant,
-    ) -> Result<(), TaskError>{
+    ) -> Result<(), TaskError> {
         // sync step one messages get processed by the writer
         // TODO: may need some error handling code here in the case that 
         // the client receiver has already been dropped
@@ -205,6 +171,62 @@ impl <R: Repository> WebsocketHandler<R> {
         Ok(())
     }
 
+    async fn decode_helper(
+        &self,
+        result: Option<Result<Message, Error>>, 
+    ) -> Decoded {
+        /*
+        This result can be one of these things:
+        - Binary websocket message
+            - when we get these we want to decode them into one of a few types of Sync Messages
+            - alternatively, if we fail to decode we want to close the connection 
+        - Closing frame websocket message
+            - when we get these we want to indicate to the writer that the websocket connection is closing
+        - Ping, Pong, Text websocket message
+            - we are not interested in these
+        - Err
+            - these indicate that there was an error buffering messages at the OS level
+            - when we get these we want to indicate to the writer that the websocket connection is closing
+        - None
+            - these indicate that the websocket connection has closed without a closing frame
+            - when we get these we want to indicate to the writer that the websocket connection is closing
+        */
+        event!(Level::TRACE, "received ws message: {:?}", result);
+        let start = Instant::now();
+        match result {
+            Some(Ok(Message::Binary(bytes))) => {
+                event!(Level::TRACE, "decoding message");
+                match SyncMessage::decode_v1(&bytes) {
+                    Ok(sync_message) => {
+                        let message_type = match sync_message {
+                            SyncMessage::SyncStep1(_) => { WSMessageType::SyncStep1 },
+                            SyncMessage::SyncStep2(_) => {WSMessageType::SyncStep2 },
+                            SyncMessage::Update(_) => { WSMessageType::Update },
+                        };
+                        self.metrics_ws.record_received_ws_message(bytes.len(), message_type);
+                        // TODO: record metrics about received websocket messages here
+                        // this should probably be a method of the handler struct so that
+                        // it has access to the metrics value
+                        event!(Level::DEBUG, "decoded valid sync message: {:?}", sync_message);
+                        Decoded::Valid(sync_message, start)
+                    },
+                    Err(e) => {
+                        self.metrics_ws.record_received_ws_message(
+                            bytes.len(), WSMessageType::Error
+                        );
+                        event!(Level::INFO, "failed to decode message with error: {e}");
+                        Decoded::Skip
+                    },
+                }
+            },
+            Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
+                Decoded::Failure
+            },
+            Some(Ok(_)) => Decoded::Skip,
+        }
+    }
+
+    #[instrument(skip_all)]
     async fn process_client_sync_step_two(
         &self,
         encoded_update: Vec<u8>,
@@ -281,6 +303,7 @@ impl <R: Repository> WebsocketHandler<R> {
         return Ok(new_offset);
     }
 
+    #[instrument(skip_all)]
     async fn reader_hot_path(
         &self,
         encoded_update: Vec<u8>,
@@ -323,6 +346,7 @@ impl <R: Repository> WebsocketHandler<R> {
         return Ok(Some(new_offset));
     }
 
+
     async fn read(
         &self,
         mut websocket_receiver: SplitStream<WebSocket>,
@@ -339,7 +363,7 @@ impl <R: Repository> WebsocketHandler<R> {
                 _ = cancel_token.cancelled() => {
                     return Ok(());
                 },
-                result = websocket_receiver.next() => match decode_helper(result).await {
+                result = websocket_receiver.next() => match self.decode_helper(result).await {
                     Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
@@ -368,7 +392,7 @@ impl <R: Repository> WebsocketHandler<R> {
                     event!(Level::INFO, "returning from reader because of cancellation token");
                     return Ok(());
                 },
-                result = websocket_receiver.next() => match decode_helper(result).await {
+                result = websocket_receiver.next() => match self.decode_helper(result).await {
                     Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
@@ -390,6 +414,7 @@ impl <R: Repository> WebsocketHandler<R> {
         }
     }
     
+    #[instrument(skip_all)]
     async fn send_server_sync_step_one(
         &self,
         websocket_sender: &mut SplitSink<WebSocket, Message>,
@@ -399,7 +424,9 @@ impl <R: Repository> WebsocketHandler<R> {
             self.topic_id, self.client_id
         ).await?;
         let server_sync_step_1 = build_server_sync_step_1(_last_received_offset, self.client_id);
-        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into())).await?;
+        websocket_sender.send(Message::Binary(server_sync_step_1.encode_v1().into()))
+            .instrument(info_span!("send_sync_step_one_ws_message"))
+            .await?;
         event!(
             name: "server_sync_step_one_canonical_log_line",
             Level::INFO,
@@ -407,11 +434,13 @@ impl <R: Repository> WebsocketHandler<R> {
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id=self.client_id,
+            last_received_offset=_last_received_offset,
             "server_sync_step_one_canonical_log_line",
         );
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn process_client_sync_step_one(
         &self,
         writer: Writer<WriterAwaitingHandshake>,
@@ -447,6 +476,7 @@ impl <R: Repository> WebsocketHandler<R> {
         Ok((hot_path_writer, decoded_bulk_update.encode_v1()))
     }
 
+    #[instrument(skip_all,fields(skipped_message))]
     async fn write_hot_path_loop(
         &self,
         update: UpdateMessage, 
@@ -458,9 +488,12 @@ impl <R: Repository> WebsocketHandler<R> {
             let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
             // TODO: batch read messages from the broker queue, use try receive
             // TODO: batch send messages, concatenate many broker messages into one ws message
-            websocket_sender.send(ws_message).await?;
+            websocket_sender.send(ws_message)
+                .instrument(info_span!("send_update_ws_message"))
+                .await?;
             skipped_message = false;
         }
+        tracing::Span::current().record("skipped_message", skipped_message);
         event!(
             name: "writer_hot_path_canonical_log_line",
             Level::INFO,
@@ -516,8 +549,11 @@ impl <R: Repository> WebsocketHandler<R> {
             }
         };
         // send the bulk update over the websocket connection
+        // TODO: this should be happening inside of the process_client_sync_step_one function
         let ws_message = Message::Binary(SyncMessage::SyncStep2(bulk_update).encode_v1().into());
-        websocket_sender.send(ws_message).await?;
+        websocket_sender.send(ws_message)
+            .instrument(info_span!("send_server_sync_step_two_ws_message"))
+            .await?;
 
         loop {
             // we need to use this tokio select statement to prevent dangling write tasks
@@ -546,7 +582,8 @@ impl <R: Repository> WebsocketHandler<R> {
                             )));
                             return Err(TaskError::BrokerReceiveError(e));
                         },
-                        Err(BroadcastRVError::Lagged(_)) => {
+                        Err(BroadcastRVError::Lagged(count_missed)) => {
+                            event!(name: "lagged_broker_receiver", Level::WARN, count_missed);
                             // TODO: this is the case in which we missed some messages sent to this topic
                             //       by some fast senders. We should read the missed messages from the
                             //       database so that we can catch up
@@ -586,6 +623,7 @@ async fn handle_socket<R: Repository>(
     client_id: u64,
     state: AppState<R>,
 ) {
+    let _guard = state.metrics_ws.ws_lifecycle_guard();
     // register the websocket connection with the broker
     let (
         broker_sender, broker_receiver
@@ -610,7 +648,7 @@ async fn handle_socket<R: Repository>(
     // of scope before the read or write tasks end. However in oder to convince the compiler
     // of that, we need to wrap the WebsocketHandler in an Arc so that it has 'static
     let websocket_handler = Arc::new(WebsocketHandler::new(
-        topic_id, user_id, client_id, state.repo,
+        topic_id, user_id, client_id, state.repo, state.metrics_ws.clone(),
     ));
     let handler_read = Arc::clone(&websocket_handler);
     let handler_write = Arc::clone(&websocket_handler);

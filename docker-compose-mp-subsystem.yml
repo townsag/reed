@@ -18,6 +18,7 @@ services:
     # restart: always
     volumes:
       - pgData:/var/lib/postgresql/data
+      - ./docker/postgres/init/:/docker-entrypoint-initdb.d/:ro
   migrate:
     # container_name: migrate
     build:
@@ -28,7 +29,32 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/message_proxy?sslmode=disable
-  
+  otel_collector_contrib_pg_agent:
+    image: otel/opentelemetry-collector-contrib:latest
+    command:
+      - --config=/etc/config.yml
+    volumes:
+      - ./docker/otel-collector-pg/config.yaml:/etc/config.yml:ro
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DATABASE=message_proxy
+      - OTEL_COLLECTOR_GATEWAY_OTLP_ENDPOINT=otel-collector:4317
+      - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133"]
+      interval: 5s
+      retries: 5
+      start_period: 60s
+      timeout: 5s
+    networks:
+      - default
+      - telemetry
+    depends_on:
+      postgres:
+        condition: service_healthy  
   message_proxy:
     # container_name: message_proxy
     build:
@@ -45,6 +71,8 @@ services:
       - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
       - RUST_LOG=debug
       - RUST_BACKTRACE=full
+      - OTEL_METRIC_EXPORT_INTERVAL=5000
+      # ^ in milliseconds
     networks:
       - default
       - telemetry

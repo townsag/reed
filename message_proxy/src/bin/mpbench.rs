@@ -26,7 +26,7 @@ use rand::{
     rngs::SmallRng,
 };
 use yrs::{
-    Doc, GetString, IndexedSequence, Options, ReadTxn, StickyIndex, Text, TextRef, Transact, Update, sync::SyncMessage, updates::{
+    Doc, GetString, IndexedSequence, Options, ReadTxn, StateVector, StickyIndex, Text, TextRef, Transact, Update, sync::SyncMessage, updates::{
         decoder::Decode, encoder::Encode
     }
 };
@@ -96,8 +96,8 @@ async fn generate_events(
                 next_recon_time = next_recon_time + Duration::from_millis(next_recon_offset);
             }
             _ = time::sleep_until(next_op_time) => {
-                eprintln!("publishing operation event, {:?}", Instant::now());
                 count_ops += 1;
+                eprintln!("publishing operation event, {:?}", count_ops);
                 event_sender.send(LoadEvent::Operation).await?;
                 next_op_offset = (ops_exp_dist.sample(&mut rng) * 60_000.0) as u64;
                 // anchor the next operation event time to the time that the current event should
@@ -194,6 +194,13 @@ impl DocumentState {
             SyncMessage::Update(encoded_update) => {
                 // ignore update messages before we have received a server
                 // sync step two message
+                /*
+                Checkpoint:
+                - figure out how frequently this is happening 
+                - this may be the reason that the printed state vectors are missing many operations
+
+                
+                 */
                 if !self.ready_for_remote_update() {
                     return Ok(None);
                 }
@@ -228,6 +235,9 @@ impl DocumentState {
         let txn = &self.doc.transact();
         self.text.get_string(txn)
     }
+    fn get_version_vector(&self) -> StateVector {
+        self.doc.transact().state_vector()
+    }
     fn get_count_local_ops(&self) -> u32 {
         self.count_local_operations
     }
@@ -236,7 +246,7 @@ impl DocumentState {
 async fn process_events(
     config: ClientConfig,
     mut event_receiver: Receiver<LoadEvent>,
-    cancel: CancellationToken,
+    cancel_ws: CancellationToken,
 ) -> Result<u32> {
     /*
     Insight:
@@ -257,6 +267,8 @@ async fn process_events(
         let client_sync_step_one = state.make_client_sync_step_one();
         write.send(Message::Binary(client_sync_step_one.encode_v1().into())).await?;
         eprintln!("sent client sync step one");
+
+        let mut event_receiver_alive = true;
         loop {
             tokio::select! {
                 ws_result = read.next() => match ws_result {
@@ -277,7 +289,9 @@ async fn process_events(
                         return Err(anyhow!("received none from the websocket reader, indicating the connection is closed"));
                     },
                 },
-                event = event_receiver.recv(), if state.ready_for_local_update() => match event {
+                event = event_receiver.recv(), if (
+                    state.ready_for_local_update() && event_receiver_alive
+                ) => match event {
                     Some(LoadEvent::Operation) => {
                         // on operation event, apply to document state and send websocket message
                         let update_sync_message = state.receive_operation_event()?;
@@ -289,13 +303,12 @@ async fn process_events(
                         break;
                     },
                     None => {
-                        eprintln!("text representation: {}", state.get_representation());
-                        // return Err(anyhow!("received none from event channel, indicating event spawning task panicked")); 
-                        return Ok(state.get_count_local_ops());
+                        event_receiver_alive = false;
                     },
                 },
-                _ = cancel.cancelled() => {
+                _ = cancel_ws.cancelled() => {
                     eprintln!("text representation: {}", state.get_representation());
+                    eprintln!("state vector: {:?}", state.get_version_vector());
                     return Ok(state.get_count_local_ops());
                 },
             }
@@ -326,27 +339,37 @@ impl ClientConfig {
 
 async fn pseudo_client(
     config: ClientConfig,
-    cancel: CancellationToken,
-) -> Result<Vec<u32>> {
+    cancel_event: CancellationToken,
+    cancel_ws: CancellationToken,
+) -> Result<(Vec<u32>, Vec<anyhow::Error>)> {
     // spawn a task that will generate events
     let (event_sender, event_receiver) = mpsc::channel(100);
-    let mut set = JoinSet::new();
+    let mut set: JoinSet<std::prelude::v1::Result<u32, anyhow::Error>> = JoinSet::new();
     set.spawn(generate_events(
-        config.operations_per_minute, config.reconnections_per_minute, event_sender, cancel.clone(),
+        config.operations_per_minute, config.reconnections_per_minute, event_sender, cancel_event,
     ));
     // spawn a task that will process events, generate messages, and process websocket messages
     // this second task should own the websocket connection, the document state, and the receiver
     // for the channel the first task published events to
-    set.spawn(process_events(config, event_receiver, cancel));
-
+    // set.spawn(process_events(config, event_receiver, cancel));
+    set.spawn(process_events(config, event_receiver, cancel_ws));
     let mut counts = vec![];
+    let mut errors = vec![];
     while let Some(result) = set.join_next().await {
-        if let Ok(Ok(count)) = result {
-            counts.push(count);
+        match result {
+            Ok(Ok(count)) => {
+                counts.push(count);
+            },
+            Ok(Err(e)) => {
+                errors.push(e);
+            }
+            Err(e) => {
+                eprintln!("failed to join with: {}", e);
+            },
         }
     }
 
-    Ok(counts)
+    Ok((counts, errors))
 }
 
 /*
@@ -360,8 +383,10 @@ the select-loop structure lends itself well to the cancel token approach
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Config::parse();
-    let finish_at = Instant::now() + Duration::from_secs(args.length_seconds as u64);
-    let cancel = CancellationToken::new();
+    let events_finish_at = Instant::now() + Duration::from_secs(args.length_seconds as u64);
+    let ws_finish_at = events_finish_at + Duration::from_secs(600);
+    let cancel_event = CancellationToken::new();
+    let cancel_ws = CancellationToken::new();
     let documents: Vec<Uuid> = (0..args.num_documents).map(|_| Uuid::new_v4()).collect();
     println!("found args: {:?}", args);
     // spawn n pseudo clients
@@ -377,11 +402,14 @@ async fn main() -> Result<()> {
             reconnections_per_minute: args.reconnections_per_minute,
         };
         println!("spawning client: {}", i);
-        set.spawn(pseudo_client(config, cancel.clone()));
+        set.spawn(pseudo_client(config, cancel_event.clone(), cancel_ws.clone()));
     }
     // use a timer to kill the pseudo clients after length seconds has been reached
-    time::sleep_until(finish_at).await;
-    cancel.cancel();
+    time::sleep_until(events_finish_at).await;
+    eprintln!("========== canceling event spawner tasks ==========");
+    cancel_event.cancel();
+    time::sleep_until(ws_finish_at).await;
+    cancel_ws.cancel();
     let result = set.join_all().await;
     eprintln!("counts: {:?}", result);
     eprintln!("end time: {:?}", Instant::now());

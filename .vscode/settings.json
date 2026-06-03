@@ -1,5 +1,6 @@
 {
   "cSpell.words": [
+    "bearertokenauth",
     "CLICKHOUSE",
     "clickstack",
     "codegen",
@@ -14,10 +15,12 @@
     "jackc",
     "jetstream",
     "mpbench",
+    "mpsc",
     "nxyt",
     "Oapi",
     "oneshot",
     "OPAMP",
+    "otelcol",
     "otelgrpc",
     "otelpgx",
     "otelslog",
@@ -30,6 +33,7 @@
     "pgconn",
     "pgtype",
     "pgxpool",
+    "postgresqlreceiver",
     "qwer",
     "reconnections",
     "rgba",

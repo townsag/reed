@@ -469,7 +469,7 @@ impl <R: Repository> WebsocketHandler<R> {
             count_updates=happens_after_updates.len(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id=self.client_id,
+            client_id_dst=self.client_id,
             "received client sync step one message and constructed server sync step two, transitioning writer from handshake to hot path"
         );
         
@@ -502,7 +502,8 @@ impl <R: Repository> WebsocketHandler<R> {
             skipped_message,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id=self.client_id,
+            client_id_src=update.client_id,
+            client_id_dst=self.client_id,
             "writer_hot_path_canonical_log_line",
         );
         return Ok(());

@@ -1,7 +1,7 @@
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::{
     Resource,
-    logs::SdkLoggerProvider,
+    logs::{BatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider},
     metrics::{PeriodicReader, SdkMeterProvider},
     trace::SdkTracerProvider,
 };
@@ -18,7 +18,12 @@ use opentelemetry::{
     KeyValue,
     global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
 };
-use tracing_subscriber::{self, EnvFilter, Layer, layer::{SubscriberExt}, util::SubscriberInitExt};
+use tracing::{
+    Level, Subscriber, field::{Field, Visit}
+};
+use tracing_subscriber::{
+    self, EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt
+};
 use tracing_opentelemetry;
 use std::{env, time::Duration};
 
@@ -94,9 +99,17 @@ impl ProviderGuard {
             .with_metadata(map.clone())
             .build()
             .expect("failed to create log exporter");
+        let log_processor = BatchLogProcessor::builder(log_exporter)
+            .with_batch_config(
+                BatchConfigBuilder::default()
+                    .with_max_export_batch_size(512)
+                    .with_max_queue_size(8192)
+                    .build()
+            )
+            .build();
         let logger_provider = SdkLoggerProvider::builder()
             .with_resource(resource.clone())
-            .with_batch_exporter(log_exporter)
+            .with_log_processor(log_processor)
             .build();
         // I don't have to set the global logger provider here because the (rust) tracing library 
         // will be integrated with the otel sdk backend via the otel tracing bridge
@@ -146,6 +159,47 @@ impl Drop for ProviderGuard {
     }
 }
 
+struct ClientIdExtractor{
+    client_id_src: Option<u64>
+}
+
+impl ClientIdExtractor {
+    fn new() -> Self {
+        ClientIdExtractor{ client_id_src: None }
+    }
+}
+
+impl Visit for ClientIdExtractor {
+    fn record_debug(&mut self, _field: &Field, _value: &dyn core::fmt::Debug) {}
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if field.name() == "client_id_src" {
+            self.client_id_src = Some(value)
+        }
+    }
+}
+
+struct ClientSampleLayer{}
+
+impl <S: Subscriber> Layer<S> for ClientSampleLayer {
+    fn event_enabled(&self, _event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) -> bool {
+        // allow all events with severity level higher than info
+        if *_event.metadata().level() <= Level::WARN {
+            return true;
+        }
+        // need to construct a visitor that records the client_id_src field of the log 
+        // https://docs.rs/tracing-core/latest/tracing_core/field/trait.Visit.html
+        let mut visitor = ClientIdExtractor::new();
+        _event.record(&mut visitor);
+        
+        match visitor.client_id_src {
+            // allow all events with client_id_src values that evenly divide by 10
+            Some(client_id) => { return client_id % 10 == 0; },
+            // allow all events with no client_id_src field
+            None => { return false; }
+        }
+    }
+}
+
 pub fn init_otel() -> (ProviderGuard, MetricsWS) {
     let providers = ProviderGuard::new();
     // add a opentelemetry_appender_tracing tracing subscriber layer that will map tracing events 
@@ -167,34 +221,63 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
     //
     // Note: This filtering will also drop logs from these components even when
     // they are used outside of the OTLP Exporter.
-    let filter_otel = EnvFilter::try_from_default_env().expect("failed to parse log level env var: RUST_LOG")
+    // A span or event will be recorded if it is enabled by any per-layer filter, but it will be skipped
+    // by the layers whose filters did not enable it.
+    let filter_otel = EnvFilter::try_from_default_env()
+        .expect("failed to parse log level env var: RUST_LOG")
         // .add_directive("hyper=off".parse().unwrap())
+        // hyper_util
         // .add_directive("tonic=off".parse().unwrap())
-        .add_directive("h2=off".parse().unwrap())
-        .add_directive("tower=off".parse().unwrap())
-        .add_directive("opentelemetry-otlp=off".parse().unwrap())
-        .add_directive("opentelemetry_sdk=off".parse().unwrap());
         // .add_directive("reqwest=off".parse().unwrap());
+        // === start directives we may want ===
+        .add_directive("h2=info".parse().unwrap())
+        .add_directive("tower=info".parse().unwrap())
+        .add_directive("opentelemetry-otlp=info".parse().unwrap())
+        .add_directive("opentelemetry_sdk=info".parse().unwrap());
+        // === end directives we may want =====
+    /*
+    Checkpoint:
+    - there are logs missing
+    - it looks like we are occasionally failing to export telemetry from the message proxy task to the otel collector
+    - in order to diagnose this problem, adjust the message proxy fmt logs to log otel sdk logs at the DEBUG level 
+      but log message proxy application related information at the WARN level
+     */
+    // filtering with a target will filter an event by default then only include the event if it 
+    // passes the target filter. This is different than the behavior that we want. Instead we want
+    // to include the event by default then filter out events 
+    let filter_fmt = EnvFilter::try_from_default_env()
+        .expect("failed to parse log level env var: RUST_LOG")
+        .add_directive("message_proxy=warn".parse().unwrap())
+        .add_directive("sqlx=warn".parse().unwrap())
+        .add_directive("h2=info".parse().unwrap())
+        .add_directive("tower=info".parse().unwrap())
+        .add_directive("opentelemetry-otlp=info".parse().unwrap())
+        .add_directive("opentelemetry_sdk=info".parse().unwrap());
 
     // let level = filter_otel.max_level_hint();
+    let client_sample_layer = ClientSampleLayer{};
     
     // set up logging related otel <--> rust machinery
     let otel_logging_layer = OpenTelemetryTracingBridge::new(&providers.logger_provider)
-        .with_filter(filter_otel.clone());
-    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_filter(filter_otel);
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_filter(filter_fmt);
+        // .with_filter(filter_fmt_message_proxy);
 
     // set up tracing related otel <--> rust machinery
     let tracer = providers.tracer_provider.tracer("mp-service");
     let otel_tracing_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     tracing_subscriber::registry()
-        // add the layer to the tracing subscriber registry that forwards logs from the tracing subscriber
-        // to the otel logging provider
-        .with(otel_logging_layer)
         // this tracing subscriber fmt layer sits at a higher level relative to the otel stdout log exporter
         // using this layer as opposed to the stdout exporter means fewer function calls and heap allocations
         .with(fmt_layer)
+        // this layer removed logs that have client_id and are not Warn or higher and are from client_ids that
+        // are not sampled
+        .with(client_sample_layer)
+        // add the layer to the tracing subscriber registry that forwards logs from the tracing subscriber
+        // to the otel logging provider
+        .with(otel_logging_layer)
         // this layer intercepts traces being sent to the rust tracing library and forwards them to the otel sdk
         .with(otel_tracing_layer)
         // Attempts to set self as the global default subscriber in the current scope, panicking if this fails.

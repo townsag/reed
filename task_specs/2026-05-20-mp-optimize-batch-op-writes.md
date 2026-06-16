@@ -22,6 +22,50 @@
     - [x] add tracing for the hot path
         - [x] add tracing exporter and tracer provider using the sdk
         - [x] add the tracing_opentelemetry layer that allows us to intercept traces created by the tracing library and route them to the otel backend
+    - [ ] add report to the mpbench output:
+        - per client
+            - [x] count of send operations
+            - [x] count of received messages
+            - [ ] count of received operations
+            - [x] count of applied operations
+        - in aggregate
+            - [ ] total messages sent
+            - [ ] total operations received
+            - [ ] total operations applied
+    - [ ] logging wish list:
+        - [x] add src_client_id and dst_client_id to the writer hot path log line so that we can search for all the logs associated with a specific source or a specific destination
+    - [ ] metrics wish list:
+        - Message / Operation volume:
+            - [ ] how many clients does each received ws message find
+                - degree of fan out 
+                - this may lend itself well to a bar graph
+            - [ ] for each received message what is the service time latency until that message is rebroadcast
+                - this would lend itself well to a heat map
+                - ws to ws service time
+                - average of service times per unique message_id
+                - maximum of service times per unique message_id
+            - [ ] count of received operations
+            - [ ] count of received ws messages
+            - [ ] count of send ws messages
+        - Misc:
+            - [ ] count of connections per room
+        - Potential Failures:
+            - [ ] how often do we skip messages
+                - [ ] we skip update messages when waiting for a sync step two message
+                - [ ] we skip sync messages when expecting updates 
+            - [ ] count of lagged messages per second
+                - when we discover that we have lagged when receiving from the broadcast broker, this is the number of messages that we have lagged
+                - add this to the writer hot path canonical log line
+            - [ ] count of instances of lagging when reading from the broadcast receiver
+                - this records that we lagged, not how much we lagged
+            - [ ] ws back pressure, latency
+                - how long does it take to write the message to the websocket in the hot path
+                - will this measure the time that it takes to write to the buffer or the time until the buffer is flushed?
+            - [ ] count of failures when writing to the websocket
+            - [ ] count of failures when reading from the websocket
+        - Database and Persistence
+            - [ ] how long to acquire database connection
+            - [ ] internal postgres metrics about lock contention
 - [ ] if postgres write through put + coordination and metadata overhead associated with many writes is the reason that we have high write latency, fix the problem by batching at the task level and the instance level
     - [ ] optimistically read operation messages from the websocket until there are no more operation messages
     - [ ] update the repo abstraction to support submitting writes as part of a larger batch split between async tasks

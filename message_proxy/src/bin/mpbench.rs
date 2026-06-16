@@ -109,6 +109,18 @@ async fn generate_events(
     }
 }
 
+#[derive(Debug,Default,Clone)]
+struct ClientStatistics {
+    count_local_operations: u64,
+    count_received_update_messages: u64,
+    count_received_handshake_messages: u64,
+    // count_received_operations: u64,
+    // this counts the number of messages that have been applied to the document, not
+    // the number of messages that the document has been internally ready to incorporate
+    // into the document state when the message was received
+    count_applied_updates: u64,
+}
+
 struct DocumentState {
     doc: Doc,
     text: TextRef,
@@ -116,7 +128,8 @@ struct DocumentState {
     sticky_index: StickyIndex,
     received_server_sync_step_two: bool,
     sent_client_sync_step_two: bool,
-    count_local_operations: u32,
+    // count_local_operations: u32,
+    client_statistics: ClientStatistics,
 }
 
 const EXAMPLE_TEXT: &str = "In a hole in the ground there lived a hobbit. Not a nasty,
@@ -140,7 +153,7 @@ impl DocumentState {
             sticky_index: sticky_index,
             received_server_sync_step_two: false,
             sent_client_sync_step_two: false,
-            count_local_operations: 0,
+            client_statistics: ClientStatistics::default(),
         })
     }
     fn reset_handshake_state(&mut self) {
@@ -154,37 +167,43 @@ impl DocumentState {
         return self.sent_client_sync_step_two;
     }
     fn make_client_sync_step_one(&self) -> SyncMessage {
+        /*
+        - why does this state vector function produce the offset of the next operation we expect
+          to receive instead of the last operation that we have received?
+            - based on my understanding of .state_vector() what we are reading here is not
+              actually an inclusive upper bound on the offset of operations that have been 
+              received by this client, but instead an exclusive upper bound
+            - meaning when we send this state vector, we are saying that we have received all
+              of the updates with offset up to but __NOT__ including the offset for that client
+              in the state vector
+                - /Users/andrewtownsend/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yrs-0.25.0/src/block_store.rs:22
+            - this means that we should not be searching for values that are strictly greater 
+              than this state vector but instead values that are greater than or equal to the
+              offsets in this state vector
+         */
         let sv = self.doc.transact().state_vector();
         SyncMessage::SyncStep1(sv)
     }
     fn receive_sync_message(&mut self, message: SyncMessage) -> Result<Option<SyncMessage>> {
         match message {
             SyncMessage::SyncStep1(remote_sv) => {
-                eprintln!("received remote state vector: {:?}", remote_sv);
+                self.client_statistics.count_received_handshake_messages += 1;
                 // make a state vector that represents the local document state
                 let mut sv = self.doc.transact().state_vector();
-                eprintln!("have local state vector: {:?}", sv);
                 // doctor the state vector so the offset of the current client_id is the same for the 
                 // remote state vector
                 let local_client_id = self.doc.client_id();
                 sv.set_min(local_client_id, remote_sv.get(&local_client_id));
-                eprintln!("local state vector after patch: {:?}", sv);
                 // create a diff containing the operations not included in the doctored state vector
                 // this includes all the operations the remote server has not seen
                 let update = self.doc.transact().encode_diff_v1(&sv);
-                {
-                    let decoded_update = Update::decode_v1(&update)?;
-                    eprintln!(
-                        "sending update as sync step two: {:?}", 
-                        decoded_update,
-                    );
-                }
                 // send the update over the websocket as a sync step 2 message
                 let client_sync_step_2 = SyncMessage::SyncStep2(update);
                 self.sent_client_sync_step_two = true;
                 return Ok(Some(client_sync_step_2));
             },
             SyncMessage::SyncStep2(encoded_update) => {
+                self.client_statistics.count_received_handshake_messages += 1;
                 let decoded_update = Update::decode_v1(&encoded_update)?;
                 // apply the sync step 2 message to local state like an update
                 self.doc.transact_mut().apply_update(decoded_update)?;
@@ -194,16 +213,11 @@ impl DocumentState {
             SyncMessage::Update(encoded_update) => {
                 // ignore update messages before we have received a server
                 // sync step two message
-                /*
-                Checkpoint:
-                - figure out how frequently this is happening 
-                - this may be the reason that the printed state vectors are missing many operations
-
-                
-                 */
+                self.client_statistics.count_received_update_messages += 1;
                 if !self.ready_for_remote_update() {
                     return Ok(None);
                 }
+                self.client_statistics.count_applied_updates += 1;
                 let decoded_update = Update::decode_v1(&encoded_update)?;
                 self.doc.transact_mut().apply_update(decoded_update)?;
                 return Ok(None);
@@ -212,8 +226,8 @@ impl DocumentState {
     }
     fn receive_operation_event(&mut self) -> Result<SyncMessage> {
         // insert the next character in the hobbit intro into the text at the stick index
-        let next_offset = self.count_local_operations as usize % EXAMPLE_TEXT.len();
-        self.count_local_operations += 1;
+        let next_offset = self.client_statistics.count_local_operations as usize % EXAMPLE_TEXT.len();
+        self.client_statistics.count_local_operations += 1;
         let next_characters = &EXAMPLE_TEXT[next_offset..next_offset + 1];
 
         // create a update sync message resulting from this insert and return it
@@ -231,15 +245,22 @@ impl DocumentState {
 
         Ok(SyncMessage::Update(encoded_update))
     }
-    fn get_representation(&self) -> String {
+    fn _get_representation(&self) -> String {
         let txn = &self.doc.transact();
         self.text.get_string(txn)
     }
-    fn get_version_vector(&self) -> StateVector {
+    fn _get_version_vector(&self) -> StateVector {
         self.doc.transact().state_vector()
     }
-    fn get_count_local_ops(&self) -> u32 {
-        self.count_local_operations
+    fn print_pending_update(&self) {
+        if let Some(pending_update) = self.doc.transact().store().pending_update() {
+            eprintln!("pending_update missing state vector: {:?} for doc with client: {}", pending_update.missing, self.doc.client_id());
+        } else {
+            eprintln!("no pending update for client: {}", self.doc.client_id());
+        }
+    }
+    fn get_client_stats(&self) -> ClientStatistics {
+        return self.client_statistics.clone();
     }
 }
 
@@ -247,7 +268,7 @@ async fn process_events(
     config: ClientConfig,
     mut event_receiver: Receiver<LoadEvent>,
     cancel_ws: CancellationToken,
-) -> Result<u32> {
+) -> Result<ClientStatistics> {
     /*
     Insight:
     - in the case of the message proxy server, we have to wait for the client to send the sync 
@@ -266,7 +287,7 @@ async fn process_events(
         eprintln!("successfully connected to websocket server");
         let client_sync_step_one = state.make_client_sync_step_one();
         write.send(Message::Binary(client_sync_step_one.encode_v1().into())).await?;
-        eprintln!("sent client sync step one");
+        // eprintln!("sent client sync step one");
 
         let mut event_receiver_alive = true;
         loop {
@@ -307,9 +328,10 @@ async fn process_events(
                     },
                 },
                 _ = cancel_ws.cancelled() => {
-                    eprintln!("text representation: {}", state.get_representation());
-                    eprintln!("state vector: {:?}", state.get_version_vector());
-                    return Ok(state.get_count_local_ops());
+                    // eprintln!("text representation: {}", state.get_representation());
+                    // eprintln!("state vector: {:?} for client id: {}", state.get_version_vector(), config.client_id);
+                    state.print_pending_update();
+                    return Ok(state.get_client_stats());
                 },
             }
         }
@@ -341,35 +363,28 @@ async fn pseudo_client(
     config: ClientConfig,
     cancel_event: CancellationToken,
     cancel_ws: CancellationToken,
-) -> Result<(Vec<u32>, Vec<anyhow::Error>)> {
+) -> (Result<u32, anyhow::Error>, Result<ClientStatistics, anyhow::Error>) {
     // spawn a task that will generate events
     let (event_sender, event_receiver) = mpsc::channel(100);
-    let mut set: JoinSet<std::prelude::v1::Result<u32, anyhow::Error>> = JoinSet::new();
-    set.spawn(generate_events(
+
+    let generator_handle = tokio::spawn(generate_events(
         config.operations_per_minute, config.reconnections_per_minute, event_sender, cancel_event,
     ));
-    // spawn a task that will process events, generate messages, and process websocket messages
-    // this second task should own the websocket connection, the document state, and the receiver
-    // for the channel the first task published events to
-    // set.spawn(process_events(config, event_receiver, cancel));
-    set.spawn(process_events(config, event_receiver, cancel_ws));
-    let mut counts = vec![];
-    let mut errors = vec![];
-    while let Some(result) = set.join_next().await {
-        match result {
-            Ok(Ok(count)) => {
-                counts.push(count);
-            },
-            Ok(Err(e)) => {
-                errors.push(e);
-            }
-            Err(e) => {
-                eprintln!("failed to join with: {}", e);
-            },
-        }
-    }
+    let processor_handle = tokio::spawn(process_events(
+        config, event_receiver, cancel_ws,
+    ));
 
-    Ok((counts, errors))
+    // join the generator task first because its cancellation token will be called first
+    let count_generated = match generator_handle.await {
+        Ok(count_generated) => count_generated,
+        Err(e) => Err(e).with_context(|| "failed to join generator task"),
+    };
+    // next join the processor task
+    let client_stats = match processor_handle.await {
+        Ok(client_statistics) => client_statistics,
+        Err(e) => Err(e).with_context(|| "failed to join processor task"),
+    };
+    (count_generated, client_stats)
 }
 
 /*
@@ -384,7 +399,7 @@ the select-loop structure lends itself well to the cancel token approach
 async fn main() -> Result<()> {
     let args = Config::parse();
     let events_finish_at = Instant::now() + Duration::from_secs(args.length_seconds as u64);
-    let ws_finish_at = events_finish_at + Duration::from_secs(600);
+    let ws_finish_at = events_finish_at + Duration::from_secs(80);
     let cancel_event = CancellationToken::new();
     let cancel_ws = CancellationToken::new();
     let documents: Vec<Uuid> = (0..args.num_documents).map(|_| Uuid::new_v4()).collect();
@@ -410,8 +425,10 @@ async fn main() -> Result<()> {
     cancel_event.cancel();
     time::sleep_until(ws_finish_at).await;
     cancel_ws.cancel();
-    let result = set.join_all().await;
-    eprintln!("counts: {:?}", result);
+    let results = set.join_all().await;
+    for result in results {
+        eprintln!("{:?}", result);
+    }
     eprintln!("end time: {:?}", Instant::now());
     Ok(())
 }

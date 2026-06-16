@@ -24,10 +24,10 @@
         - [x] add the tracing_opentelemetry layer that allows us to intercept traces created by the tracing library and route them to the otel backend
     - [ ] add report to the mpbench output:
         - per client
-            - [ ] count of send operations
-            - [ ] count of received messages
+            - [x] count of send operations
+            - [x] count of received messages
             - [ ] count of received operations
-            - [ ] count of applied operations
+            - [x] count of applied operations
         - in aggregate
             - [ ] total messages sent
             - [ ] total operations received

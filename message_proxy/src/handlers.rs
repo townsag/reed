@@ -35,7 +35,7 @@ use futures_util::{
 use yrs::{
     StateVector, Update,
     sync::protocol::SyncMessage,
-    updates::decoder::Decode, 
+    updates::decoder::Decode,
 };
 use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository, RepoError};
@@ -59,6 +59,7 @@ enum ReaderEvent {
 #[derive(Clone,Debug)]
 pub struct UpdateMessage {
     client_id: u64,
+    offset: u32,
     payload: Arc<Vec<u8>>,
 }
 
@@ -92,7 +93,8 @@ enum Decoded {
     Failure,
 }
 
-
+// TODO: these logs should be part of the instrumentation for server sync step one messages
+// verify that they are part of the server sync step one instrumentation
 fn build_server_sync_step_1(
     last_received_offset: Option<u32>, client_id: u64,
 ) -> SyncMessage {
@@ -120,7 +122,6 @@ fn build_server_sync_step_1(
       read times could stall the writer handshake process even though reading the last received message
       for this client_id is independent from the writer sync process.
     */
-    event!(Level::INFO, "read last received offset: {:?}", last_received_offset);
     /*
     State vectors in Yrs are zero indexed, meaning that a state vector that has received no operations 
     from a client has no record of that client (instead of having the key value pair client_id: 0).
@@ -130,9 +131,19 @@ fn build_server_sync_step_1(
     // a bulk update of messages that we are missing 
     let mut reader_sv = StateVector::default();
     if let Some(op) = last_received_offset {
-        reader_sv.set_max(client_id, op);
+        // TODO: I think yrs expects that the state vectors passed around include exclusive upper bounds
+        // of operations received for a client_id instead of inclusive upper bounds. If this is true
+        // then we need to replace `op` with `op + 1`. As it is right now, there is not a bug, we will
+        // just receive one more operation than is necessary
+        reader_sv.set_max(client_id, op + 1);
     }
-    event!(Level::INFO, "sending state vector from writer to reader: {:?}", reader_sv);
+    event!(
+        Level::DEBUG,
+        client_id_src=client_id,
+        ?reader_sv,
+        last_received_offset,
+        "sending state vector from writer to reader",
+    );
     SyncMessage::SyncStep1(reader_sv)
 }
 
@@ -173,7 +184,8 @@ impl <R: Repository> WebsocketHandler<R> {
 
     async fn decode_helper(
         &self,
-        result: Option<Result<Message, Error>>, 
+        result: Option<Result<Message, Error>>,
+        client_id: u64,
     ) -> Decoded {
         /*
         This result can be one of these things:
@@ -191,11 +203,9 @@ impl <R: Repository> WebsocketHandler<R> {
             - these indicate that the websocket connection has closed without a closing frame
             - when we get these we want to indicate to the writer that the websocket connection is closing
         */
-        event!(Level::TRACE, "received ws message: {:?}", result);
         let start = Instant::now();
         match result {
             Some(Ok(Message::Binary(bytes))) => {
-                event!(Level::TRACE, "decoding message");
                 match SyncMessage::decode_v1(&bytes) {
                     Ok(sync_message) => {
                         let message_type = match sync_message {
@@ -207,14 +217,13 @@ impl <R: Repository> WebsocketHandler<R> {
                         // TODO: record metrics about received websocket messages here
                         // this should probably be a method of the handler struct so that
                         // it has access to the metrics value
-                        event!(Level::DEBUG, "decoded valid sync message: {:?}", sync_message);
                         Decoded::Valid(sync_message, start)
                     },
                     Err(e) => {
                         self.metrics_ws.record_received_ws_message(
                             bytes.len(), WSMessageType::Error
                         );
-                        event!(Level::INFO, "failed to decode message with error: {e}");
+                        event!(Level::WARN, client_id_src=client_id, "failed to decode message with error: {e}");
                         Decoded::Skip
                     },
                 }
@@ -224,6 +233,39 @@ impl <R: Repository> WebsocketHandler<R> {
             },
             Some(Ok(_)) => Decoded::Skip,
         }
+    }
+
+    fn parse_new_offset(
+        &self,
+        encoded_update: &Vec<u8>,
+    ) -> Result<Option<u32>, TaskError> {
+        let decoded_update = Update::decode_v1(&encoded_update)?;
+        event!(
+            Level::DEBUG,
+            client_id_src=self.client_id,
+            insertions=?&decoded_update.insertions(false),
+            "received update information"
+        );
+        // find the inclusive upper bound of operation offsets contained by this update
+        // for the src client id associated with this connection
+        let insertions = decoded_update.insertions(false);
+        let new_offset: Option<u32> = match insertions.get(&self.client_id) {
+            Some(id_range) => {
+                // this gives us an iterator over the ranges of operations in the id range
+                // this is because the id range can be disjoint instead of continuous
+                let new_offset = id_range.iter()
+                    // this gives us the last range in the iterator of ranges
+                    .last()
+                    // this gives us the exclusive upper bound of the last range 
+                    .map(|r| r.end)
+                    // this gives us the inclusive upper bound of the last range
+                    .map(|o| o - 1);
+                new_offset
+            },
+            // this is the case where there are no operations in the update for the current client_id
+            None => None
+        };
+        Ok(new_offset)
     }
 
     #[instrument(skip_all)]
@@ -240,22 +282,17 @@ impl <R: Repository> WebsocketHandler<R> {
         default value is zero
             - this is like saying that clients who have made no updates have made one update
         
+        ^This is only partially true. Updates are zero indexed, however the state vector
+        holds the exclusive upper bound of operations received. Meaning that the state vector
+        stores the offset of the next operation a client expects to receive
+        
         - when we receive a client sync step two message, we need to throw it out 
         if it has no operations in it because we don't want to save an empty update
         at a offset that a valid update would be saved at
         */
         // decoded Updates cannot be held across await boundaries because it is not send
         // when possible, we need to drop the update before an await boundary
-        let new_offset = {
-            let client_bulk_update = Update::decode_v1(&encoded_update)?;
-            let update_state_vector = client_bulk_update.state_vector_lower();
-            if !update_state_vector.contains_client(&self.client_id) {
-                event!(Level::INFO, "skipping writing this update to the db because it contains no operations");
-                None
-            } else {
-                Some(update_state_vector.get(&self.client_id))
-            }
-        };
+        let new_offset = self.parse_new_offset(&encoded_update)?;
         // if the message had new operations in it, write the message to the database
         let mut skipped_persistence = true;
         let mut update_size_bytes = 0;
@@ -264,24 +301,28 @@ impl <R: Repository> WebsocketHandler<R> {
                 self.topic_id,
                 self.client_id,
             ).await?;
+            // drop the update if the offset of the update is less than or equal 
+            // to the offset of the most recent update from this client
             if last_received_offset.is_none_or(|x| x < new_offset) {
                 skipped_persistence = false;
                 update_size_bytes = encoded_update.len();
-                // here we should check if the update with this offset or higher is already in the
-                // database. If so, skip persisting this update because it contains redundant
-                // information
+
                 self.repo.write_operation(
                     self.topic_id, self.user_id, self.client_id, 
                     new_offset, &encoded_update
                 ).await?;
                 // write the bulk update to the broadcast channel
+                // only broadcast updates that are not duplicates
                 let update_message = UpdateMessage{
-                    client_id: self.client_id, payload: Arc::new(encoded_update),
+                    client_id: self.client_id, 
+                    payload: Arc::new(encoded_update), 
+                    offset: new_offset,
                 };
                 broker_sender.send(update_message)?;
             } else {
                 event!(
                     Level::DEBUG,
+                    client_id_src=self.client_id,
                     "skipping persisting this operation because the old offset ({:?}) and new offset ({}) are >=",
                     last_received_offset,
                     new_offset,
@@ -297,7 +338,7 @@ impl <R: Repository> WebsocketHandler<R> {
             update_size_bytes,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id=self.client_id,
+            client_id_src=self.client_id,
             "received an persisted client sync step two message, transitioning from handshake to hot path for reader",
         );
         return Ok(new_offset);
@@ -313,37 +354,32 @@ impl <R: Repository> WebsocketHandler<R> {
         let update_size_bytes = encoded_update.len();
         // if it is an update message, process it with the reader then forward
         // it to other connected clients using the broker
-        let new_offset = {
-            let update = Update::decode_v1(&encoded_update)?;
-            event!(
-                Level::INFO,
-                "received update message {:?} with offset {}",
-                update, update.state_vector_lower().get(&self.client_id),
-            );
-            event!(Level::INFO, "with state vector: {:?}", update.state_vector_lower());
-            update.state_vector_lower().get(&self.client_id)
-        };
-        self.repo.write_operation(
-            self.topic_id, self.user_id, self.client_id, 
-            new_offset, &encoded_update,
-        ).await?;
-        let message = UpdateMessage { 
-            client_id: self.client_id, 
-            payload: Arc::new(encoded_update),
-        };
-        sender_broker.send(message)?;
+        let new_offset = self.parse_new_offset(&encoded_update)?;
+        if let Some(offset) = new_offset {
+            self.repo.write_operation(
+                self.topic_id, self.user_id, self.client_id, 
+                offset, &encoded_update,
+            ).await?;
+            let message = UpdateMessage { 
+                client_id: self.client_id, 
+                payload: Arc::new(encoded_update),
+                offset: offset,
+            };
+            sender_broker.send(message)?;
+        }
         event!(
             name: "reader_hot_path_canonical_log_line",
             Level::INFO,
             new_offset,
+            skipped=new_offset.is_none(),
             update_size_bytes,
             duration_ns = start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id=self.client_id,
+            client_id_src=self.client_id,
             "reader_hot_path_canonical_log_line",
         );
-        return Ok(Some(new_offset));
+        return Ok(new_offset);
     }
 
 
@@ -363,7 +399,7 @@ impl <R: Repository> WebsocketHandler<R> {
                 _ = cancel_token.cancelled() => {
                     return Ok(());
                 },
-                result = websocket_receiver.next() => match self.decode_helper(result).await {
+                result = websocket_receiver.next() => match self.decode_helper(result, self.client_id).await {
                     Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
@@ -383,16 +419,16 @@ impl <R: Repository> WebsocketHandler<R> {
                 },
             }
         };
-        event!(Level::INFO, "entering reader hot path");
+        event!(Level::DEBUG, client_id_src=self.client_id, "entering reader hot path");
         // enter the hot path
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
-                    event!(Level::INFO, "returning from reader because of cancellation token");
+                    event!(Level::DEBUG, client_id_src=self.client_id, "returning from reader because of cancellation token");
                     return Ok(());
                 },
-                result = websocket_receiver.next() => match self.decode_helper(result).await {
+                result = websocket_receiver.next() => match self.decode_helper(result, self.client_id).await {
                     Decoded::Valid(SyncMessage::SyncStep1(sv), start) => {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
@@ -433,7 +469,7 @@ impl <R: Repository> WebsocketHandler<R> {
             duration_ns=start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id=self.client_id,
+            client_id_src=self.client_id,
             last_received_offset=_last_received_offset,
             "server_sync_step_one_canonical_log_line",
         );
@@ -447,8 +483,17 @@ impl <R: Repository> WebsocketHandler<R> {
         encoded_sv: Vec<u8>,
         start: Instant,
     ) -> Result<(Writer<WriterHotPath>, Vec<u8>), TaskError> {
+        // remember that this list of pairs is a series of exclusive upper bounds on the 
+        // offsets of operations that have been received per client. Meaning that each 
+        // offset in the vec of pairs is the next offset that is expected to be received,
+        // not the offset of the most recent operation that has been received.
         let pairs = {
-        let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+            let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+            event!(
+                Level::DEBUG,
+                client_id_src=self.client_id,
+                "client state vector: {:?}", client_state_vector,
+            );
             writer.prepare_sync_step_2(client_state_vector)
         };
         let happens_after_updates = self.repo.read_operations_after(
@@ -458,10 +503,12 @@ impl <R: Repository> WebsocketHandler<R> {
         for encoded_update in &happens_after_updates {
             decoded_updates.push(Update::decode_v1(&encoded_update)?)
         }
+
         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
         let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
             client_state_vector, decoded_updates
         );
+        let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
         event!(
             name: "writer_client_sync_step_one_canonical_log_line",
             Level::INFO,
@@ -469,7 +516,9 @@ impl <R: Repository> WebsocketHandler<R> {
             count_updates=happens_after_updates.len(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
-            client_id_dst=self.client_id,
+            client_id_src=self.client_id,
+            client_state_vector=?client_state_vector,
+            update_insertions=?decoded_bulk_update.insertions(false),
             "received client sync step one message and constructed server sync step two, transitioning writer from handshake to hot path"
         );
         
@@ -485,13 +534,32 @@ impl <R: Repository> WebsocketHandler<R> {
         let start = Instant::now();
         let mut skipped_message = true;
         if *update.key() != self.client_id {
+            skipped_message = false;
             let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
             // TODO: batch read messages from the broker queue, use try receive
             // TODO: batch send messages, concatenate many broker messages into one ws message
-            websocket_sender.send(ws_message)
+            let ws_send_result = websocket_sender.send(ws_message)
                 .instrument(info_span!("send_update_ws_message"))
-                .await?;
-            skipped_message = false;
+                .await;
+            if let Err(e) = ws_send_result {
+                tracing::Span::current().record("skipped_message", skipped_message);
+                // TODO: having two invocations of the event macro is very messy, work on reducing code duplication
+                event!(
+                    name: "writer_hot_path_canonical_log_line",
+                    Level::ERROR,
+                    duration_ns=start.elapsed().as_nanos(),
+                    // TODO: we may need to gather more metadata here like client_id and offset of the update
+                    skipped_message,
+                    topic_id=self.topic_id.as_hyphenated().to_string(),
+                    user_id=self.user_id.as_hyphenated().to_string(),
+                    client_id_src=update.client_id,
+                    client_id_dst=self.client_id,
+                    offset=update.offset,
+                    error=%e,
+                    "writer_hot_path_canonical_log_line",
+                );        
+                return Err(e.into());
+            }
         }
         tracing::Span::current().record("skipped_message", skipped_message);
         event!(
@@ -504,6 +572,7 @@ impl <R: Repository> WebsocketHandler<R> {
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id_src=update.client_id,
             client_id_dst=self.client_id,
+            offset=update.offset,
             "writer_hot_path_canonical_log_line",
         );
         return Ok(());
@@ -578,13 +647,19 @@ impl <R: Repository> WebsocketHandler<R> {
                         Err(e @ BroadcastRVError::Closed) => {
                             // handle closure of the receiver from the broker
                             // this is an unrecoverable internal server error, we should close the connection
+                            event!(name:"closed_broker_receiver", Level::WARN, client_id_dst=self.client_id);
                             let _ = websocket_sender.send(Message::Close(Some(
                                 CloseFrame { code: 1011, reason: "internal server error".into()},
                             )));
                             return Err(TaskError::BrokerReceiveError(e));
                         },
                         Err(BroadcastRVError::Lagged(count_missed)) => {
-                            event!(name: "lagged_broker_receiver", Level::WARN, count_missed);
+                            event!(
+                                name: "lagged_broker_receiver", 
+                                Level::WARN, 
+                                count_missed,
+                                client_id_dst=self.client_id,
+                            );
                             // TODO: this is the case in which we missed some messages sent to this topic
                             //       by some fast senders. We should read the missed messages from the
                             //       database so that we can catch up
@@ -660,7 +735,16 @@ async fn handle_socket<R: Repository>(
 
     set.spawn(async move { handler_read.read(websocket_receiver, broker_sender, sync_sender, cancel_token_read).await });
     set.spawn(async move { handler_write.write(websocket_sender, broker_receiver, sync_receiver, cancel_token_write).await });
-    while let Some(_) = set.join_next().await {
+    while let Some(result) = set.join_next().await {
+        if let Ok(Err(e)) = result {
+            event!(
+                name: "task_finished_error",
+                Level::ERROR,
+                error=%e,
+                client_id_src=client_id,
+                client_id_dst=client_id,
+            )
+        }
         // TODO: this is messy, we are not yet sure which task is returning this error
         // so we could be calling cancel on the token after the read task has already returned 
         cancel_token.cancel();

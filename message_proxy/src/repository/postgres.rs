@@ -78,7 +78,8 @@ impl Repository for PgRepo {
         let start = Instant::now();
         let res = sqlx::query!(
             "INSERT INTO operations (topic_id, user_id, client_id, operation_offset, payload) 
-            VALUES ($1, $2, $3, $4, $5)",
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT DO NOTHING",
             topic_id,
             user_id,
             client_id as i64,

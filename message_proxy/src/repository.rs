@@ -87,6 +87,7 @@ pub trait Repository: Send + Sync + Clone + 'static {
     // TODO: look into whether I should use an owned value or a string slice reference when writing to the database
     // https://doc.rust-lang.org/book/ch17-05-traits-for-async.html
     // async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;
+    // write operation should use first write wins semantics for writes with the key (topic_id, client_id, offset)
     async fn write_operation(
         &self, 
         topic_id: Uuid,

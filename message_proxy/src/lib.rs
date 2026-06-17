@@ -49,6 +49,8 @@ pub async fn run() {
     // when the provider guard is dropped at the end of the run scope the drop function
     // of the provider guard will flush the various providers
     let (_provider_guard, metrics_ws) = otel::init_otel();
+    event!(Level::WARN, "should see this log");
+    event!(Level::ERROR, "should see this log");
     let pool = match postgres::build_postgres_pool().await {
         Ok(pool) => pool,
         Err(err) => {

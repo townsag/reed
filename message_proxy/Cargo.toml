@@ -10,11 +10,11 @@ clap = { version = "4.6.1", features = ["derive"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures-channel = "0.3.32"
 futures-util = "0.3.32"
-opentelemetry = { version = "0.31.0", features = ["metrics"] }
-opentelemetry-appender-tracing = "0.31.1"
-opentelemetry-otlp = { version = "0.31.1", features = ["grpc-tonic"] }
-opentelemetry-stdout = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry = { version = "0.32", features = ["metrics"] }
+opentelemetry-appender-tracing = "0.32"
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry-stdout = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["experimental_metrics_bound_instruments"] }
 rand = "0.10.1"
 rand_distr = "0.6.0"
 ratatui = "0.29.0"
@@ -26,7 +26,7 @@ tokio = { version = "1.49.0", features = ["full"] }
 tokio-tungstenite = "0.29.0"
 tokio-util = "0.7.18"
 tracing = "0.1.44"
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 trait-variant = "0.1.2"
 tui-textarea = { version = "0.7.0", features = ["ratatui", "crossterm"] }

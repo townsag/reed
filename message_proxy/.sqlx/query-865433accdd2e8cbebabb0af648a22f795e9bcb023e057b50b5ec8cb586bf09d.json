@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO operations (topic_id, user_id, client_id, operation_offset, payload) \n            VALUES ($1, $2, $3, $4, $5)\n            ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "865433accdd2e8cbebabb0af648a22f795e9bcb023e057b50b5ec8cb586bf09d"
+}

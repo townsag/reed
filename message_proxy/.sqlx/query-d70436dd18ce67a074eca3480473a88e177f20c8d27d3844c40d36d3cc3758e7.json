@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH version_vector AS(\n                SELECT * FROM UNNEST($1::bigint[], $2::bigint[])\n                AS t(client_id, min_offset)\n            )\n            SELECT o.* \n            FROM operations o \n            LEFT JOIN version_vector\n                ON o.client_id = version_vector.client_id\n            WHERE (\n                version_vector.client_id IS NULL\n                OR o.operation_offset > version_vector.min_offset\n            ) AND o.topic_id = $3",
+  "query": "WITH version_vector AS(\n                SELECT * FROM UNNEST($1::bigint[], $2::bigint[])\n                AS t(client_id, min_offset)\n            )\n            SELECT o.* \n            FROM operations o \n            LEFT JOIN version_vector\n                ON o.client_id = version_vector.client_id\n            WHERE (\n                version_vector.client_id IS NULL\n                OR o.operation_offset >= version_vector.min_offset\n            ) AND o.topic_id = $3",
   "describe": {
     "columns": [
       {
@@ -44,5 +44,5 @@
       false
     ]
   },
-  "hash": "fef8435ab1623a4a6d888994c7f90b6b4ca2769d1fe855f15ff33943672b7c09"
+  "hash": "d70436dd18ce67a074eca3480473a88e177f20c8d27d3844c40d36d3cc3758e7"
 }

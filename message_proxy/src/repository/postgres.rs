@@ -130,7 +130,7 @@ impl Repository for PgRepo {
                 ON o.client_id = version_vector.client_id
             WHERE (
                 version_vector.client_id IS NULL
-                OR o.operation_offset > version_vector.min_offset
+                OR o.operation_offset >= version_vector.min_offset
             ) AND o.topic_id = $3",
             &state_vector.iter().map(|(k, _)| *k as i64).collect::<Vec<i64>>(),
             &state_vector.iter().map(|(_, v)| *v as i64).collect::<Vec<i64>>(),

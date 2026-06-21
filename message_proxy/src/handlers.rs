@@ -131,10 +131,8 @@ fn build_server_sync_step_1(
     // a bulk update of messages that we are missing 
     let mut reader_sv = StateVector::default();
     if let Some(op) = last_received_offset {
-        // TODO: I think yrs expects that the state vectors passed around include exclusive upper bounds
-        // of operations received for a client_id instead of inclusive upper bounds. If this is true
-        // then we need to replace `op` with `op + 1`. As it is right now, there is not a bug, we will
-        // just receive one more operation than is necessary
+        // yrs expects that the state vectors passed around include exclusive upper bounds
+        // of operations received for a client_id instead of inclusive upper bounds.
         reader_sv.set_max(client_id, op + 1);
     }
     event!(
@@ -214,9 +212,6 @@ impl <R: Repository> WebsocketHandler<R> {
                             SyncMessage::Update(_) => { WSMessageType::Update },
                         };
                         self.metrics_ws.record_received_ws_message(bytes.len(), message_type);
-                        // TODO: record metrics about received websocket messages here
-                        // this should probably be a method of the handler struct so that
-                        // it has access to the metrics value
                         Decoded::Valid(sync_message, start)
                     },
                     Err(e) => {
@@ -476,38 +471,55 @@ impl <R: Repository> WebsocketHandler<R> {
         Ok(())
     }
 
+    fn parse_client_sync_step_one_to_pairs(
+        &self,
+        encoded_sv: &Vec<u8>,
+    ) -> Result<Vec<(u64, u32)>, TaskError> {
+        let decoded_state_vector = StateVector::decode_v1(&encoded_sv)?;
+        event!(
+            Level::TRACE,
+            client_id_src=self.client_id,
+            "client state vector: {:?}", decoded_state_vector,
+        );
+        let pairs = decoded_state_vector
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        // remember that this list of pairs is a series of exclusive upper bounds on the 
+        // offsets of operations that have been received per client. Meaning that each 
+        // offset in the vec of pairs is the next offset that is expected to be received,
+        // not the offset of the most recent operation that has been received.
+        Ok(pairs)
+    }
+
     #[instrument(skip_all)]
     async fn process_client_sync_step_one(
         &self,
         writer: Writer<WriterAwaitingHandshake>,
         encoded_sv: Vec<u8>,
         start: Instant,
-    ) -> Result<(Writer<WriterHotPath>, Vec<u8>), TaskError> {
-        // remember that this list of pairs is a series of exclusive upper bounds on the 
-        // offsets of operations that have been received per client. Meaning that each 
-        // offset in the vec of pairs is the next offset that is expected to be received,
-        // not the offset of the most recent operation that has been received.
-        let pairs = {
-            let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
-            event!(
-                Level::DEBUG,
-                client_id_src=self.client_id,
-                "client state vector: {:?}", client_state_vector,
-            );
-            writer.prepare_sync_step_2(client_state_vector)
-        };
+        websocket_sender: &mut SplitSink<WebSocket, Message>,
+    ) -> Result<Writer<WriterHotPath>, TaskError> {
+        // create a list of pairs that can be used to query the repo
+        let pairs = self.parse_client_sync_step_one_to_pairs(&encoded_sv)?;
+        // read all the updates from the repo with a happens after relationship with the
+        // state vector
         let happens_after_updates = self.repo.read_operations_after(
             &pairs, self.topic_id,
         ).await?;
-        let mut decoded_updates = Vec::<Update>::new();
-        for encoded_update in &happens_after_updates {
-            decoded_updates.push(Update::decode_v1(&encoded_update)?)
-        }
-
-        let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
-        let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
-            client_state_vector, decoded_updates
-        );
+        // merge the happens after updates into one encoded bulk update
+        // TODO: we should also be reading and merging deletions
+        let (hot_path_writer, insertions, encoded_bulk_update) = {
+            let mut decoded_updates = Vec::<Update>::new();
+            for encoded_update in &happens_after_updates {
+                decoded_updates.push(Update::decode_v1(&encoded_update)?)
+            }
+            let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+            let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
+                client_state_vector, decoded_updates
+            );
+            (hot_path_writer, decoded_bulk_update.insertions(false), decoded_bulk_update.encode_v1())
+        };
         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
         event!(
             name: "writer_client_sync_step_one_canonical_log_line",
@@ -518,11 +530,20 @@ impl <R: Repository> WebsocketHandler<R> {
             user_id=self.user_id.as_hyphenated().to_string(),
             client_id_src=self.client_id,
             client_state_vector=?client_state_vector,
-            update_insertions=?decoded_bulk_update.insertions(false),
+            update_insertions=?insertions,
             "received client sync step one message and constructed server sync step two, transitioning writer from handshake to hot path"
         );
+        // send the bulk update over the websocket connection
+        let ws_message = Message::Binary(
+            SyncMessage::SyncStep2(encoded_bulk_update)
+                .encode_v1()
+                .into()
+        );
+        websocket_sender.send(ws_message)
+            .instrument(info_span!("send_server_sync_step_two_ws_message"))
+            .await?;
         
-        Ok((hot_path_writer, decoded_bulk_update.encode_v1()))
+        Ok(hot_path_writer)
     }
 
     #[instrument(skip_all,fields(skipped_message))]
@@ -548,7 +569,6 @@ impl <R: Repository> WebsocketHandler<R> {
                     name: "writer_hot_path_canonical_log_line",
                     Level::ERROR,
                     duration_ns=start.elapsed().as_nanos(),
-                    // TODO: we may need to gather more metadata here like client_id and offset of the update
                     skipped_message,
                     topic_id=self.topic_id.as_hyphenated().to_string(),
                     user_id=self.user_id.as_hyphenated().to_string(),
@@ -566,7 +586,6 @@ impl <R: Repository> WebsocketHandler<R> {
             name: "writer_hot_path_canonical_log_line",
             Level::INFO,
             duration_ns=start.elapsed().as_nanos(),
-            // TODO: we may need to gather more metadata here like client_id and offset of the update
             skipped_message,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -594,7 +613,7 @@ impl <R: Repository> WebsocketHandler<R> {
         // while in the writer awaiting handshake state, we can only receive state vector messages from the 
         // client indicating the messages that the client has already received. Only then can we start 
         // sending the client update messages
-        let (_writer , bulk_update) = loop {
+        let _writer = loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
@@ -603,7 +622,7 @@ impl <R: Repository> WebsocketHandler<R> {
                 },
                 result = sync_receiver => match result {
                     Ok(ReaderEvent::ClientSyncStep1(encoded_sv, start)) => {
-                        break self.process_client_sync_step_one(writer, encoded_sv, start).await?;
+                        break self.process_client_sync_step_one(writer, encoded_sv, start, &mut websocket_sender).await?;
                     },
                     Err(_) => {
                         // the sync channel returning none means that the channel has been closed
@@ -618,12 +637,6 @@ impl <R: Repository> WebsocketHandler<R> {
                 }
             }
         };
-        // send the bulk update over the websocket connection
-        // TODO: this should be happening inside of the process_client_sync_step_one function
-        let ws_message = Message::Binary(SyncMessage::SyncStep2(bulk_update).encode_v1().into());
-        websocket_sender.send(ws_message)
-            .instrument(info_span!("send_server_sync_step_two_ws_message"))
-            .await?;
 
         loop {
             // we need to use this tokio select statement to prevent dangling write tasks

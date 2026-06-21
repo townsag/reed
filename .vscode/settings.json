@@ -16,6 +16,7 @@
     "jetstream",
     "mpbench",
     "mpsc",
+    "multirange",
     "nxyt",
     "Oapi",
     "oneshot",

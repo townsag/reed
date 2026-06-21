@@ -4,7 +4,7 @@
 pub mod postgres;
 
 use uuid::Uuid;
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display, ops::Range};
 use trait_variant;
 
 // inspiration for this pattern: 
@@ -63,6 +63,9 @@ impl std::error::Error for RepoError {}
 //     pub payload: Vec<u8>,
 // }
 
+type StateVector = [(u64, u32)];
+type DeletionSet = Vec<Range<u32>>;
+
 // Add these super-traits
 // Send: the repository needs to be able to move between threads, this is required by the tokio runtime
 // Clone: the repository needs to be cloneable to that axum can pass a copy of the repository
@@ -96,8 +99,26 @@ pub trait Repository: Send + Sync + Clone + 'static {
         offset: u32,
         payload: &[u8],
     ) -> Result<(), RepoError>;
-    async fn read_operations_after(&self, state_vector: &[(u64, u32)], topic_id: Uuid) -> Result<Vec<Vec<u8>>, RepoError>;
-    async fn read_last_received_offset(&self, topic_id: Uuid, client_id: u64) -> Result<Option<u32>, RepoError>;
+    async fn read_operations_after(
+        &self, 
+        state_vector: &[(u64, u32)], 
+        topic_id: Uuid
+    ) -> Result<Vec<Vec<u8>>, RepoError>;
+    async fn read_doc_deletion_set(
+        &self,
+        topic_id: Uuid,
+    ) -> Result<HashMap<u64, DeletionSet>, RepoError>;
+    async fn write_deletion_set_if_novel(
+        &self,
+        topic_id: Uuid,
+        client_id: u64,
+        deletion_set: &DeletionSet,
+    ) -> Result<bool, RepoError>;
+    async fn read_last_received_offset(
+        &self,
+        topic_id: Uuid,
+        client_id: u64,
+    ) -> Result<Option<u32>, RepoError>;
 }
 
 // hopefully when we want to stub out the repository implementation when performing

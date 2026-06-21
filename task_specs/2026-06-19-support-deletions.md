@@ -37,6 +37,12 @@
 - [ ] make deletions durable
     - [ ] store the deletion set as an int8 multi range in postgres in a new deletions table
         - pk: (topic_id, client_id)
+        - [ ] create a migration that adds the deletion table
+        - [ ] add to the repository interface and implementation
+            - [ ] read entire deletion set for a document
+            - [ ] add deletion set to the document if the deletion set contains novel deletions, returning true if the deletion set contained novel deletions
+            - [ ] decide if we want to use a write transaction to add update and if they should use the same sql statement or different sql statements
+                - for data consistency, we probably want them to fail atomically, even if deletions are associative and idempotent
     - behavior
         - definition: client_delete_multirange @> new_delete_multirange
             - Does the client level deletion multirange contain the deletion set for this update message?

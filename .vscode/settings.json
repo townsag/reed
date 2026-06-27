@@ -50,6 +50,7 @@
     "Timestamptz",
     "townsag",
     "tungstenite",
+    "upserts",
     "ywasm"
   ]
 }

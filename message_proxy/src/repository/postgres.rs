@@ -1,8 +1,13 @@
 use opentelemetry::{InstrumentationScope, KeyValue, global, metrics::Histogram};
-use sqlx::{Postgres};
+use sqlx::{self, Postgres};
+use sqlx::postgres::types::PgRange;
 use sqlx_tracing::Pool;
 use tokio::time::Instant;
-use std::clone::Clone;
+use std::{
+    clone::Clone, 
+    collections::{HashMap},
+    ops::{Range, Bound},
+};
 use tracing::instrument;
 
 use crate::repository::{Repository, RepoError, ErrorKind, /* RepoMessage */ };
@@ -59,6 +64,34 @@ impl PgRepo {
         };
 
         return PgRepo { pool, metrics_pg }
+    }
+}
+
+
+struct PgRangeWrapper(PgRange<i64>);
+
+impl From<PgRangeWrapper> for Range<u32> {
+    fn from(pg_range: PgRangeWrapper) -> Self {
+        let start = match pg_range.0.start {
+            Bound::Excluded(i) => (i + 1) as u32,
+            Bound::Included(i) => i as u32,
+            Bound::Unbounded => 0,
+        };
+        let end = match pg_range.0.end {
+            Bound::Excluded(i) => i as u32,
+            Bound::Included(i) => (i + 1) as u32,
+            Bound::Unbounded => u32::MAX,
+        };
+        Range{ start: start, end: end }
+    }
+}
+
+impl From<Range<u32>> for PgRangeWrapper {
+    fn from(value: Range<u32>) -> Self {
+        PgRangeWrapper(PgRange {
+            start: Bound::Included(value.start as i64), 
+            end: Bound::Excluded(value.end as i64)
+        })
     }
 }
 
@@ -120,6 +153,11 @@ impl Repository for PgRepo {
         &self, state_vector: &[(u64,u32)], topic_id: uuid::Uuid,
     ) -> Result<Vec<Vec<u8>> ,RepoError> {
         let start = Instant::now();
+        // TODO: this may be an issue: we are casing unsigned int 32s to signed int 32s so
+        // that they may be stored in postgres. This means that if we are doing numerical 
+        // operations on the operation_offset column inside postgres, then we may be operating
+        // on negative signed integers that represent positive unsigned integers. This would
+        // result in lost operation reads
         let operations = sqlx::query!(
             "WITH version_vector AS(
                 SELECT * FROM UNNEST($1::bigint[], $2::bigint[])
@@ -145,7 +183,7 @@ impl Repository for PgRepo {
             Err(e @ sqlx::error::Error::InvalidArgument(_)) => {
                 Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
             },
-            Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e)}),
+            Err(e) => Err(RepoError { kind: ErrorKind::FailedRead, source: Box::new(e)}),
         };
 
         self.metrics_pg.db_client_operations_duration.record(
@@ -167,7 +205,7 @@ impl Repository for PgRepo {
         ret
     }
     #[instrument(skip(self),fields(last_received_offset))]
-    async  fn read_last_received_offset(
+    async fn read_last_received_offset(
         &self,
         topic_id: uuid::Uuid,
         client_id: u64,
@@ -208,15 +246,118 @@ impl Repository for PgRepo {
 
         ret
     }
+    async fn read_doc_deletion_set(
+        &self,
+        topic_id: uuid::Uuid,
+    ) -> Result<HashMap<u64,super::DeletionSet>, RepoError> {
+        let start = Instant::now();
+        let result = sqlx::query!(
+            r#"WITH doc_deletion_set AS(
+                SELECT client_id, unnest(delete_set) as deletion_range
+                FROM deletions
+                WHERE topic_id = $1
+            )
+            SELECT client_id, array_agg(deletion_range) as "client_deletion_set!"
+            FROM doc_deletion_set
+            GROUP BY client_id"#,
+            topic_id
+        ).fetch_all(&self.pool).await;
+        let ret = match result {
+            Ok(records) => {
+                let deletions_by_client = records.iter()
+                    .map(|r| {
+                        let ranges: Vec<Range<u32>> = r.client_deletion_set
+                            .iter()
+                            .cloned()
+                            .map(PgRangeWrapper)
+                            .map(|w| w.into())
+                            .collect();
+                        (r.client_id as u64, ranges)
+                    })
+                    .collect();
+                Ok(deletions_by_client)
+            }
+            Err(e @ sqlx::Error::InvalidArgument(_)) => {
+                Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
+            },
+            Err(e) => Err(RepoError { kind: ErrorKind::FailedRead, source: Box::new(e) })
+        };
+        self.metrics_pg.db_client_operations_duration.record(
+            start.elapsed().as_secs_f64(),
+            &[
+                KeyValue::new("db.system.name", "postgres"),
+                KeyValue::new("db.operation.name", "SELECT"),
+                KeyValue::new("db.collection.name", "deletions"),
+                KeyValue::new("db.namespace", "message_proxy"),
+                KeyValue::new("db.query.name", "read the deletion set for a document"),
+            ]
+        );
+        ret
+    }
+    /// Conditionally inserts the delete set or updates the existing delete set multirange
+    /// if the new delete set has novel deletes. Returns a bool representing if we actually
+    /// made the insert or update, meaning that this delete set is novel
+    async fn write_deletion_set_if_novel(
+        &self,
+        topic_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        client_id: u64,
+        deletion_set: &super::DeletionSet,
+    ) -> Result<bool,RepoError> {
+        let start = Instant::now();
+        let pg_ranges: Vec<PgRange<i64>> = deletion_set
+            .iter()
+            .cloned()
+            .map(|r| r.into())
+            .map(|w: PgRangeWrapper| w.0)
+            .collect();
+        let result = sqlx::query!(
+            r#"WITH merged AS (
+                SELECT range_agg(multirange(range)) AS merged_multirange
+                FROM unnest($1::int8range[]) AS range
+            )
+            INSERT INTO deletions (topic_id, user_id, client_id, delete_set)
+            SELECT $2, $3, $4, merged_multirange
+            FROM merged
+            ON CONFLICT (topic_id, client_id) DO UPDATE
+                SET delete_set = deletions.delete_set + excluded.delete_set
+                WHERE NOT deletions.delete_set @> excluded.delete_set
+            RETURNING TRUE AS "performed_insert!""#,
+            &pg_ranges,
+            topic_id,
+            user_id,
+            client_id as i64,
+        ).fetch_optional(&self.pool).await;
+        let ret = match result {
+            Ok(Some(r)) => {
+                Ok(r.performed_insert)
+            },
+            Ok(None) => Ok(false),
+            Err(e @ sqlx::Error::InvalidArgument(_)) => {
+                Err(RepoError { kind: ErrorKind::SchemaMismatch, source: Box::new(e)})
+            },
+            Err(e) => Err(RepoError { kind: ErrorKind::FailedWrite, source: Box::new(e) })
+        };
+        self.metrics_pg.db_client_operations_duration.record(
+            start.elapsed().as_secs_f64(),
+            &[
+                KeyValue::new("db.system.name", "postgres"),
+                KeyValue::new("db.operation.name", "INSERT"),
+                KeyValue::new("db.collection.name", "deletions"),
+                KeyValue::new("db.namespace", "message_proxy"),
+                KeyValue::new("db.query.name", "write deletion set for a client_id if it is novel"),
+            ]
+        );
+        ret
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{ops::Range, vec};
     use uuid::Uuid;
     use crate::repository::{
-        RepoError, Repository,
-        postgres::{PgRepo},
+        self, RepoError, Repository, postgres::PgRepo
     };
     use sqlx::{Pool, Postgres};
     use sqlx_tracing::{Pool as TracedPool};
@@ -258,7 +399,7 @@ mod tests {
             topic_id, user_id, client_id, 1, &operation_2,
         ).await?;
 
-        let state_vector: Vec<(u64, u32)> = vec![(client_id,0)];
+        let state_vector: Vec<(u64, u32)> = vec![(client_id,1)];
         let operations = repo.read_operations_after(&state_vector, topic_id).await?;
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0], operation_2);
@@ -284,7 +425,7 @@ mod tests {
             ).await?;
         }
 
-        let version_vector = vec![(1u64, 0u32)];
+        let version_vector = vec![(1u64, 1u32)];
         let read = repo.read_operations_after(&version_vector, topic_id).await?;
         assert_eq!(read.len(), 2);
         assert!(read.contains(&vec![4u8,5,6]));
@@ -334,4 +475,158 @@ mod tests {
 
         Ok(())
     }
+    #[sqlx::test]
+    async fn test_read_write_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
+        // create a repo object from the pool
+        let repo = PgRepo::new(TracedPool::from(pool));
+        // create a deletion set to be inserted
+        let delete_set: repository::DeletionSet = vec![
+            Range{ start: 0, end: 3 },
+            Range{ start: 7, end: 9 },
+        ];
+        let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
+        // insert the deletion set, asserting that the deletion set actually was inserted
+        let was_inserted = repo.write_deletion_set_if_novel(
+            topic_id, user_id, client_id, &delete_set,
+        ).await?;
+        assert!(was_inserted, "the delete set was not deemed novel or inserted");
+        // read the inserted deletion set, asserting that it is equivalent to the deletion
+        // set that was inserted
+        let result = repo.read_doc_deletion_set(topic_id).await?;
+        match result.get(&client_id) {
+            None => panic!("the deletion set for the expected client_id was not returned"),
+            Some(ret_deletion_set) => {
+                // order does not matter for the ranges in the deletion set, we are only
+                // concerned with the fact that each range is present and there are no
+                // extra ranges.
+                assert_eq!(
+                    delete_set.len(), ret_deletion_set.len(),
+                    "the returned deletion set is a different size than the written deletion set",
+                );
+                let has_all_deletes = delete_set
+                    .iter()
+                    .all(|r| ret_deletion_set.contains(r));
+                assert!(
+                    has_all_deletes, 
+                    "a delete from delete set {:?} was missing from returned delete set {:?}",
+                    delete_set,
+                    ret_deletion_set,
+                );
+            },
+        };
+        Ok(())
+    }
+    #[sqlx::test]
+    async fn test_write_redundant_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
+        let repo = PgRepo::new(TracedPool::from(pool));
+        let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
+        let first_delete = vec![
+            Range { start: 0, end: 4 },
+            Range { start: 6, end: 18},
+        ];
+        let second_delete = vec![
+            Range { start: 1, end: 4 },
+            Range { start: 6, end: 9 },
+        ];
+        // write a delete set to the table
+        let first_write = repo.write_deletion_set_if_novel(topic_id, user_id, client_id, &first_delete).await?;
+        assert!(first_write, "first delete set was deemed not novel and not written to the table");
+        // attempt to write a second delete set to the table that is a subset of the first delete set
+        let second_write = repo.write_deletion_set_if_novel(topic_id, user_id, client_id, &second_delete).await?;
+        assert!(
+            !second_write,
+            "expected second delete set to be found not novel and not written to the table, found it was novel",
+        );
+        // read the delete set for that topic_id, client_id combo 
+        let delete_set = repo.read_doc_deletion_set(topic_id).await?;
+        let client_delete_set = delete_set.get(&client_id);
+        assert!(client_delete_set != None, "expected to find deletions for this client, found None");
+        if let Some(ds) = client_delete_set {
+            assert!(
+                *ds == first_delete,
+                "expected the read client delete set to match the first delete found that it did not match",
+            )
+        }
+        Ok(())
+    }
+    #[sqlx::test]
+    async fn test_write_overlapping_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
+        let repo = PgRepo::new(TracedPool::from(pool));
+        let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
+        let first_delete: Vec<Range<u32>> = vec![
+            Range { start: 0, end: 3 },
+            Range { start: 5, end: 7 },
+        ];
+        let second_delete: Vec<Range<u32>> = vec![
+            Range { start: 3, end: 5 },
+        ];
+        // write a delete set to the table
+        let first_write = repo.write_deletion_set_if_novel(
+            topic_id, user_id, client_id, &first_delete,
+        ).await?;
+        assert!(first_write, "expected: the first write to be inserted, found: that it was not");
+        // write a second delete set to the table with some overlapping values with the first 
+        // delete set
+        let second_write = repo.write_deletion_set_if_novel(
+            topic_id, user_id, client_id, &second_delete,
+        ).await?;
+        // validate that the result of the second write indicated that the second write went through
+        assert!(second_write, "expected: the second write to be inserted, found: that it was not");
+        // read the delete set for this topic_id client id combo
+        let delete_set = repo.read_doc_deletion_set(topic_id).await?;
+        // validate that the returned delete set is the union of the two written delete sets
+        let expected_delete_set : Vec<Range<u32>> = vec![Range { start: 0, end: 7 }];
+        let per_client_delete = delete_set.get(&client_id);
+        assert_eq!(
+            *per_client_delete.expect("no client delete set found after insertion"),
+            expected_delete_set,
+            "retrieved delete set for client_id: {} was not the same as the expected delete set",
+            client_id,
+        );
+        Ok(())
+    }
+    #[sqlx::test]
+    async fn test_independent_delete_set_upserts(pool: Pool<Postgres>) -> Result<(), RepoError> {
+        let repo = PgRepo::new(TracedPool::from(pool));
+        let (topic_id, user_id, client_id_a, client_id_b) = (
+            Uuid::new_v4(), Uuid::new_v4(), 1 as u64, 2 as u64
+        );
+        let delete_set_a: Vec<Range<u32>> = vec![Range { start: 2, end: 4 }];
+        let delete_set_b: Vec<Range<u32>> = vec![Range { start: 3, end: 9 }];
+        // insert a delete set for one client
+        let write_a = repo.write_deletion_set_if_novel(topic_id, user_id, client_id_a, &delete_set_a).await?;
+        assert!(write_a, "expected the write delete set to go through, found that it was deemed a duplicate");
+        // insert a delete set for a different client but the same topic id
+        let write_b = repo.write_deletion_set_if_novel(topic_id, user_id, client_id_b, &delete_set_b).await?;
+        assert!(write_b, "expected the write delete set to go through, found that it was deemed a duplicate");
+        // read the delete set for that topic_id
+        let delete_set_topic = repo.read_doc_deletion_set(topic_id).await?;
+        // verify that the two insertions are independent
+        assert_eq!(
+            *delete_set_topic.get(&client_id_a).expect("delete set for client a was not read from the database"),
+            delete_set_a,
+            "expected the delete set for client a written to the db to match the delete set read from the db",
+        );
+        assert_eq!(
+            *delete_set_topic.get(&client_id_b).expect("delete set for client b was not read from the database"),
+            delete_set_b,
+            "expected the delete set for client b written to the db to match the delete set read from the db"
+        );
+        Ok(())
+    }
+    // #[sqlx::test]
+    // async fn test_range_conversion_boundary_behavior(pool: Pool<Postgres>) -> Result<(), RepoError> {
+    //     // we currently have no way of writing ranges other than [)
+    //     //  - this is inclusive lower bound and exclusive upper bound
+    //     // until we have a way to write ranges with different boundary semantics I 
+    //     // don't think it is necessary to test the boundary behavior
+    //     // merging ranges is already tested here test_write_overlapping_delete_set
+    //     Ok(())
+    // }
+    // #[sqlx::test]
+    // async fn test_write_invalid_range(pool: Pool<Postgres>) -> Result<(), RepoError> {
+    //     // write some bad data and validate that the returned error type is consistent with what
+    //     // we expect
+    //     Ok(())
+    // }
 }

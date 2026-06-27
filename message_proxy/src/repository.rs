@@ -12,14 +12,18 @@ use trait_variant;
 #[derive(Debug)]
 pub enum ErrorKind {
     FailedWrite,
+    FailedRead,
     SchemaMismatch,
-    NotFound
+    NotFound,
+    Encoding,
 }
 
 impl Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FailedWrite => write!(f, "FailedWrite"),
+            Self::FailedRead => write!(f, "FailedRead"),
+            Self::Encoding => write!(f, "Encoding"),
             Self::SchemaMismatch => write!(f, "SchemaMismatch"),
             Self::NotFound => write!(f, "NotFound"),
         }
@@ -63,7 +67,7 @@ impl std::error::Error for RepoError {}
 //     pub payload: Vec<u8>,
 // }
 
-type StateVector = [(u64, u32)];
+// type StateVector = [(u64, u32)];
 type DeletionSet = Vec<Range<u32>>;
 
 // Add these super-traits
@@ -108,9 +112,13 @@ pub trait Repository: Send + Sync + Clone + 'static {
         &self,
         topic_id: Uuid,
     ) -> Result<HashMap<u64, DeletionSet>, RepoError>;
+    // TODO: should we be accepting DeletionSet as a referent to a vector here or 
+    // a reference to a slice? Do we need to be explicit in wether the return type
+    // is a slice or a vector?
     async fn write_deletion_set_if_novel(
         &self,
         topic_id: Uuid,
+        user_id: Uuid,
         client_id: u64,
         deletion_set: &DeletionSet,
     ) -> Result<bool, RepoError>;

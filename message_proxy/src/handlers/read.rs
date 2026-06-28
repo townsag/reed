@@ -7,6 +7,7 @@ use tokio::sync::oneshot::{
 use yrs::updates::encoder::Encode;
 use std::sync::Arc;
 use std::time::Instant;
+use std::ops::Range;
 use tokio_util::sync::CancellationToken;
 use axum::{
     extract::ws::{
@@ -23,10 +24,14 @@ use yrs::{
     StateVector, Update,
     sync::protocol::SyncMessage,
     updates::decoder::Decode,
+    DeleteSet,
 };
 use tracing::{Level, event, instrument};
 
-use crate::repository::{Repository};
+use crate::repository::{
+    Repository,
+    ClientDeletionSet,
+};
 use crate::config::otel::{
     WSMessageType,
 };
@@ -37,6 +42,22 @@ use crate::handlers::{
     ReaderEvent,
     UpdateMessage
 };
+
+struct MessageOutcome {
+    persisted_update: bool,
+    persisted_deletion: bool,
+    broadcast_message: bool,
+}
+
+impl From<(bool, bool, bool)> for MessageOutcome {
+    fn from(value: (bool, bool, bool)) -> Self {
+        MessageOutcome {
+            persisted_update: value.0,
+            persisted_deletion: value.1,
+            broadcast_message: value.2,
+        }
+    }
+}
 
 impl <R: Repository> WebsocketHandler<R> {
     #[instrument(skip_all)]
@@ -105,10 +126,12 @@ impl <R: Repository> WebsocketHandler<R> {
         }
     }
 
-    fn parse_new_offset(
+    fn parse_message(
         &self,
         encoded_update: &Vec<u8>,
-    ) -> Result<Option<u32>, TaskError> {
+    ) -> Result<(Option<u32>, Option<ClientDeletionSet>), TaskError> {
+        // decoded Updates cannot be held across await boundaries because it is not send
+        // when possible, we need to drop the update before an await boundary
         let decoded_update = Update::decode_v1(&encoded_update)?;
         event!(
             Level::DEBUG,
@@ -116,7 +139,10 @@ impl <R: Repository> WebsocketHandler<R> {
             insertions=?&decoded_update.insertions(false),
             "received update information"
         );
-        // find the inclusive upper bound of operation offsets contained by this update
+        // Updates are zero indexed, however the state vector
+        // holds the exclusive upper bound of operations received. Meaning that the state vector
+        // stores the offset of the next operation a client expects to receive.
+        // Find the inclusive upper bound of operation offsets contained by this update
         // for the src client id associated with this connection
         let insertions = decoded_update.insertions(false);
         let new_offset: Option<u32> = match insertions.get(&self.client_id) {
@@ -135,60 +161,59 @@ impl <R: Repository> WebsocketHandler<R> {
             // this is the case where there are no operations in the update for the current client_id
             None => None
         };
-        Ok(new_offset)
+
+        let deletions: &DeleteSet = decoded_update.delete_set();
+        // DeleteSet does not expose a get method for accessIng the underlying IdSet so 
+        // I have to use this iter().find() access method
+
+        // iter iterates over references to key value pairs in the IdSet hashmap
+        // find takes reference to the elements that we are iterating over
+        // for this reason k and v are both && (double references)
+        // we can use the &k pattern to destructure the &&element into a u64 and 
+        // &&IdRange because u64 implements the copy trait. We do not have to take
+        // ownership of the k symbol
+        let client_deletion_set: Option<Vec<Range<u32>>> = deletions.iter()
+            // find takes a mutable reference to the element
+            .find(|(k, _)| **k == self.client_id)
+            // map takes the element itself
+            .map(|(_, id_range)| {
+                // iterate over ranges in the IdRange
+                id_range.iter().cloned().collect()
+            });
+
+        Ok((new_offset, client_deletion_set))
     }
 
     #[instrument(skip_all)]
-    async fn process_client_sync_step_two(
+    async fn persist_and_broadcast_update(
         &self,
         encoded_update: Vec<u8>,
         broker_sender: &BCSender<UpdateMessage>,
-        start: Instant,
-    ) -> Result<Option<u32>, TaskError> {
-        // if it is a sync step two message, process it at the reader then break
-        /*
-        - Yrs has zero indexed updates
-        - However if no operations are found for a client_id in a state_vector the
-        default value is zero
-            - this is like saying that clients who have made no updates have made one update
-        
-        ^This is only partially true. Updates are zero indexed, however the state vector
-        holds the exclusive upper bound of operations received. Meaning that the state vector
-        stores the offset of the next operation a client expects to receive
-        
-        - when we receive a client sync step two message, we need to throw it out 
-        if it has no operations in it because we don't want to save an empty update
-        at a offset that a valid update would be saved at
-        */
-        // decoded Updates cannot be held across await boundaries because it is not send
-        // when possible, we need to drop the update before an await boundary
-        let new_offset = self.parse_new_offset(&encoded_update)?;
-        // if the message had new operations in it, write the message to the database
-        let mut skipped_persistence = true;
-        let mut update_size_bytes = 0;
+    ) -> Result<(Option<u32>, MessageOutcome), TaskError> {
+        let (mut persisted_update, mut persisted_deletion) = (false, false);
+        // parse the optional offset of the update from the message
+        // parse the optional deletion set from the message
+        let (new_offset, new_delete_set) = self.parse_message(&encoded_update)?;
         if let Some(new_offset) = new_offset {
+            // read the previously received offset for this client_id
             let last_received_offset = self.repo.read_last_received_offset(
-                self.topic_id,
-                self.client_id,
+                self.topic_id, self.client_id
             ).await?;
-            // drop the update if the offset of the update is less than or equal 
+            // compare the offset to the previously received last offset for this client
+            // Drop the update if the offset of the update is less than or equal 
             // to the offset of the most recent update from this client
-            if last_received_offset.is_none_or(|x| x < new_offset) {
-                skipped_persistence = false;
-                update_size_bytes = encoded_update.len();
-
+            // Also, when we receive a client sync step two message, we need to throw it out 
+            // if it has no operations in it because we don't want to save an empty update
+            // at a offset that a valid update would be saved at
+            if last_received_offset.is_none_or(|o| o < new_offset) {
+                // insert the update into the operations table if this message has updates in
+                // it and the offset of the update is greater than the previous updates offset
+                // saving wether or not the message was persisted
                 self.repo.write_operation(
                     self.topic_id, self.user_id, self.client_id, 
-                    new_offset, &encoded_update
+                    new_offset, &encoded_update,
                 ).await?;
-                // write the bulk update to the broadcast channel
-                // only broadcast updates that are not duplicates
-                let update_message = UpdateMessage{
-                    client_id: self.client_id, 
-                    payload: Arc::new(encoded_update), 
-                    offset: new_offset,
-                };
-                broker_sender.send(update_message)?;
+                persisted_update = true;
             } else {
                 event!(
                     Level::DEBUG,
@@ -199,12 +224,54 @@ impl <R: Repository> WebsocketHandler<R> {
                 )
             }
         }
+        // if this message has deletions in it
+        if let Some(ref deletion_set) = new_delete_set {
+            // attempt to write the deletions to the deletions table, saving wether or not 
+            // the deletions were persisted
+            persisted_deletion = self.repo.write_deletion_set_if_novel(
+                self.topic_id, self.user_id, self.client_id, deletion_set
+            ).await?;
+        }
+        // broadcast the message if it had either novel updates or novel deletions
+        if persisted_update || persisted_deletion {
+            let update_message = UpdateMessage {
+                client_id: self.client_id,
+                offset: None,
+                payload: Arc::new(encoded_update),
+                has_deletion: !new_delete_set.is_none(),
+            };
+            broker_sender.send(update_message)?;
+        }
+
+        Ok((
+            new_offset,
+            MessageOutcome::from((
+                persisted_update, 
+                persisted_deletion, 
+                persisted_update || persisted_deletion,
+            )),
+        ))
+    }
+
+    #[instrument(skip_all)]
+    async fn process_client_sync_step_two(
+        &self,
+        encoded_update: Vec<u8>,
+        broker_sender: &BCSender<UpdateMessage>,
+        start: Instant,
+    ) -> Result<Option<u32>, TaskError> {
+        let update_size_bytes = encoded_update.len();
+        let (new_offset, message_outcome) = self.persist_and_broadcast_update(
+            encoded_update, broker_sender,
+        ).await?;
         event!(
             name: "reader_client_sync_step_two_canonical_log_line",
             Level::INFO,
-            last_offset_from_client=new_offset,
+            new_offset,
             duration_ns=start.elapsed().as_nanos(),
-            skipped_persistence,
+            skipped_write_update=message_outcome.persisted_update,
+            skipped_write_delete=message_outcome.persisted_deletion,
+            skipped_broadcast=message_outcome.broadcast_message,
             update_size_bytes,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -222,26 +289,16 @@ impl <R: Repository> WebsocketHandler<R> {
         start: Instant,
     ) -> Result<Option<u32>, TaskError> {
         let update_size_bytes = encoded_update.len();
-        // if it is an update message, process it with the reader then forward
-        // it to other connected clients using the broker
-        let new_offset = self.parse_new_offset(&encoded_update)?;
-        if let Some(offset) = new_offset {
-            self.repo.write_operation(
-                self.topic_id, self.user_id, self.client_id, 
-                offset, &encoded_update,
-            ).await?;
-            let message = UpdateMessage { 
-                client_id: self.client_id, 
-                payload: Arc::new(encoded_update),
-                offset: offset,
-            };
-            sender_broker.send(message)?;
-        }
+        let (new_offset, message_outcome) = self.persist_and_broadcast_update(
+            encoded_update, sender_broker
+        ).await?;
         event!(
             name: "reader_hot_path_canonical_log_line",
             Level::INFO,
             new_offset,
-            skipped=new_offset.is_none(),
+            skipped_write_update=message_outcome.persisted_update,
+            skipped_write_delete=message_outcome.persisted_deletion,
+            skipped_broadcast=message_outcome.broadcast_message,
             update_size_bytes,
             duration_ns = start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
@@ -274,6 +331,7 @@ impl <R: Repository> WebsocketHandler<R> {
                         let _ = Self::forward_client_sync_step_one(&mut sync_sender_opt, sv, start);
                     },
                     Decoded::Valid(SyncMessage::SyncStep2(encoded_bulk_update), start) => {
+                        // if it is a sync step two message, process it at the reader then break    
                         break self.process_client_sync_step_two(
                             encoded_bulk_update,
                             &broker_sender,

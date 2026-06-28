@@ -41,8 +41,9 @@ enum ReaderEvent {
 #[derive(Clone,Debug)]
 pub struct UpdateMessage {
     client_id: u64,
-    offset: u32,
+    offset: Option<u32>,
     payload: Arc<Vec<u8>>,
+    has_deletion: bool,
 }
 
 impl Routable for UpdateMessage {

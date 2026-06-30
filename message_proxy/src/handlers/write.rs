@@ -4,8 +4,11 @@ use tokio::sync::broadcast::{
 use tokio::sync::oneshot::{
     Receiver,
 };
-use yrs::updates::encoder::Encode;
+use yrs::encoding::write::Write;
+use yrs::updates::encoder::{Encoder, EncoderV1};
+use std::collections::HashMap;
 use std::time::Instant;
+use std::ops::Range;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use axum::{
@@ -20,9 +23,12 @@ use futures_util::{
     stream::{SplitSink},
 };
 use yrs::{
-    StateVector, Update,
+    StateVector, Update, DeleteSet, ID,
     sync::protocol::SyncMessage,
-    updates::decoder::Decode,
+    updates::{
+        decoder::Decode,
+        encoder::Encode,
+    },
 };
 use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository};
@@ -46,7 +52,7 @@ fn build_server_sync_step_1(
     Originally this code was part of the reader to preserve separation of concerns. The read task is 
     concerned with which operations the server has received from the client. The writer is concerned with 
     which operations the client has received from the server. This code was moved from the reader to the
-    writer to simplify the implementation of the writer. If this message is created in the writer. It 
+    writer to simplify the implementation of the writer. If this message is created in the writer, it 
     does not need to be communicated between the reader and the writer. The writer implementation does
     not need to worry about listening for Server Sync Step 1 reader events when it is in the hot path.
     This eliminates the possibility of a race condition between the writer and the reader in which the
@@ -66,13 +72,8 @@ fn build_server_sync_step_1(
       read times could stall the writer handshake process even though reading the last received message
       for this client_id is independent from the writer sync process.
     */
-    /*
-    State vectors in Yrs are zero indexed, meaning that a state vector that has received no operations 
-    from a client has no record of that client (instead of having the key value pair client_id: 0).
-    For this reason we have to send an empty version vector if we have seen no operations from this client
-     */
-    // send a message to the client indicating what updates we have already so that the client can send us
-    // a bulk update of messages that we are missing 
+    // send a message to the client indicating what updates we expect from the client next so the
+    // client can send us a bulk update of messages that we are missing 
     let mut reader_sv = StateVector::default();
     if let Some(op) = last_received_offset {
         // yrs expects that the state vectors passed around include exclusive upper bounds
@@ -87,6 +88,46 @@ fn build_server_sync_step_1(
         "sending state vector from writer to reader",
     );
     SyncMessage::SyncStep1(reader_sv)
+}
+
+fn hacky_build_delete_message(
+    pg_delete_set: HashMap<u64, Vec<Range<u32>>>,
+) -> Result<Update, yrs::encoding::read::Error> {
+    /*
+    - DeleteSet implements the default trait so we can create our own empty delete set
+    - DeleteSet exposes the insert method
+        - this allows us to add delete ranges into the delete set from our custom delete set
+    - DeleteSet implements the Encode trait, so we can write it to a serialized empty update
+        then deserialize to an update with that deletion set
+        - this is hacky af
+    Dearest reader,
+    You may be thinking that this approach is whack. Why am I creating a delete set, encoding 
+    it, then decoding it immediately all so I can merge the decoded update with the other merged
+    updates. Why not just modify the delete set of the merged update in place? The DeleteSet 
+    field of the Update struct is private outside of the yrs crate. This is the best hack I 
+    have found so far.
+    */
+    let mut delete_set: DeleteSet = DeleteSet::default();
+    for (client_id, deletion_ranges) in pg_delete_set {
+        for range in deletion_ranges {
+            delete_set.insert(
+                ID { client: client_id, clock: range.start },
+                // since the range is inclusive for the lower bound and exclusive 
+                // for the upper bound, the length of the deletion is the difference
+                // between the upper bound and the lower bound
+                // ex: [2,3,4] == [2,5), length is 5 - 2 = 3
+                range.end - range.start,
+            );
+        }
+    }
+    let mut encoder = EncoderV1::new();
+    // this represents the number of clients with insertions in this update
+    // we set it to zero because this is a deletion only update
+    // see: ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/yrs-0.25.0/src/update.rs:606
+    // in yrs::Update::encode_diff()
+    encoder.write_var(0 as usize);
+    delete_set.encode(&mut encoder);
+    Update::decode_v1(&encoder.to_vec())
 }
 
 impl <R: Repository> WebsocketHandler<R> {
@@ -152,18 +193,24 @@ impl <R: Repository> WebsocketHandler<R> {
         let happens_after_updates = self.repo.read_operations_after(
             &pairs, self.topic_id,
         ).await?;
-        // merge the happens after updates into one encoded bulk update
-        // TODO: we should also be reading deletions from the db and merging them into
-        // the bulk update message
+        let pg_delete_set = self.repo.read_doc_deletion_set(
+            self.topic_id
+        ).await?;
+        let has_deletions = pg_delete_set.len() > 0;
         let (hot_path_writer, insertions, encoded_bulk_update) = {
             let mut decoded_updates = Vec::<Update>::new();
             for encoded_update in &happens_after_updates {
                 decoded_updates.push(Update::decode_v1(&encoded_update)?)
             }
             let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
+            // merge the happens after updates into one encoded bulk update
             let (hot_path_writer, decoded_bulk_update) = writer.receive_state_vector(
                 client_state_vector, decoded_updates
             );
+            let delete_only_update = hacky_build_delete_message(pg_delete_set)?;
+            event!(Level::DEBUG, "delete only update: {}", delete_only_update);
+            let decoded_bulk_update = Update::merge_updates(vec![decoded_bulk_update, delete_only_update]);
+            event!(Level::DEBUG, "decoded bulk update after merge: {}", decoded_bulk_update);
             (hot_path_writer, decoded_bulk_update.insertions(false), decoded_bulk_update.encode_v1())
         };
         let client_state_vector = StateVector::decode_v1(&encoded_sv)?;
@@ -177,6 +224,8 @@ impl <R: Repository> WebsocketHandler<R> {
             client_id_src=self.client_id,
             client_state_vector=?client_state_vector,
             update_insertions=?insertions,
+            has_deletions,
+            update_size_bytes=encoded_bulk_update.len(),
             "received client sync step one message and constructed server sync step two, transitioning writer from handshake to hot path"
         );
         // send the bulk update over the websocket connection
@@ -221,6 +270,7 @@ impl <R: Repository> WebsocketHandler<R> {
                     client_id_src=update.client_id,
                     client_id_dst=self.client_id,
                     offset=update.offset,
+                    has_deletion=update.has_deletion,
                     error=%e,
                     "writer_hot_path_canonical_log_line",
                 );        
@@ -238,6 +288,7 @@ impl <R: Repository> WebsocketHandler<R> {
             client_id_src=update.client_id,
             client_id_dst=self.client_id,
             offset=update.offset,
+            has_deletion=update.has_deletion,
             "writer_hot_path_canonical_log_line",
         );
         return Ok(());

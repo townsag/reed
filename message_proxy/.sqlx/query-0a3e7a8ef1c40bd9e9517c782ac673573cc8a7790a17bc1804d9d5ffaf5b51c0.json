@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH merged AS (\n                SELECT id, range_agg(multirange(range)) AS merged_multirange\n                FROM unnest($1::bigint[], $2::int8range[]) AS ranges(id, range)\n                GROUP BY id\n            ), upserts AS (\n                INSERT INTO deletions (topic_id, user_id, client_id, delete_set)\n                SELECT $3, $4, id, merged_multirange\n                FROM merged\n                ON CONFLICT (topic_id, client_id) DO UPDATE\n                    SET delete_set = deletions.delete_set + excluded.delete_set\n                    WHERE NOT deletions.delete_set @> excluded.delete_set\n                RETURNING TRUE\n            )\n            SELECT EXISTS (SELECT 1 FROM upserts) AS \"performed_insert!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "performed_insert!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8RangeArray",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0a3e7a8ef1c40bd9e9517c782ac673573cc8a7790a17bc1804d9d5ffaf5b51c0"
+}

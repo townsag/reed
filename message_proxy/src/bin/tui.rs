@@ -152,6 +152,29 @@ impl EditorState<'_> {
         
         SyncMessage::Update(encoded_update)
     }
+    // 
+    fn process_delete(&mut self) -> Option<SyncMessage> {
+        let offset = self.get_offset();
+        eprintln!("offset: {}", offset);
+        // cannot delete if we are at the front of the document, check if we are at the
+        // front of the document and return None
+        if offset == 0 {
+            return None;
+        }
+        let mut txn = self.doc.transact_mut();
+        eprintln!("text lenght: {}", self.text.len(&txn));
+        self.text.remove_range(&mut txn, offset - 1, 1);
+        let encoded_update = txn.encode_update_v1();
+        // update the text area lines to have the new content based on the YText representation
+        let status_message = self.text.get_string(&txn);
+        self.textarea = TextArea::new(
+            status_message.lines().map(String::from).collect()
+        );
+        drop(txn);
+        self.update_cursor(offset - 1);
+
+        Some(SyncMessage::Update(encoded_update))
+    }
     // receive a message from the server that indicates which operations the client 
     // has already sent to the server. Respond to this message with all the updates that
     // have a happens-after relationship with the servers state vector
@@ -182,7 +205,6 @@ impl EditorState<'_> {
                 but the text area as the source of truth for the position of the cursor
             - we should either standardize the code for getting the cursor and the offset
                 or we should make the yrs doc the source of truth fro the cursor position
-            - also standardize the process of updating the text area and the cursor
          */
         let txn = self.doc.transact();
         // get the location of the cursor from the text area in terms of the YText
@@ -296,7 +318,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             write.send(Message::Binary(update_message.encode_v1().into())).await?;
                         },
                         Input { key: Key::Backspace, .. } => {
-                            // implement backspace here lol
+                            if let Some(update_message) = editor_state.process_delete() {
+                                write.send(Message::Binary(update_message.encode_v1().into())).await?;
+                            }
                         },
                         input => {
                             editor_state.textarea.input(input);

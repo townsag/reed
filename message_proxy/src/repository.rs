@@ -1,25 +1,29 @@
-// by default a module is private from it's parent modules 
+// by default a module is private from it's parent modules
 // we need to declare this module as public (as well as its parent module)
-// so that it can be used when setting up the server 
+// so that it can be used when setting up the server
 pub mod postgres;
 
-use uuid::Uuid;
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display, ops::Range};
 use trait_variant;
+use uuid::Uuid;
 
-// inspiration for this pattern: 
+// inspiration for this pattern:
 // https://doc.rust-lang.org/std/io/struct.Error.html
 #[derive(Debug)]
 pub enum ErrorKind {
     FailedWrite,
+    FailedRead,
     SchemaMismatch,
-    NotFound
+    NotFound,
+    Encoding,
 }
 
 impl Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FailedWrite => write!(f, "FailedWrite"),
+            Self::FailedRead => write!(f, "FailedRead"),
+            Self::Encoding => write!(f, "Encoding"),
             Self::SchemaMismatch => write!(f, "SchemaMismatch"),
             Self::NotFound => write!(f, "NotFound"),
         }
@@ -29,21 +33,25 @@ impl Display for ErrorKind {
 #[derive(Debug)]
 pub struct RepoError {
     pub kind: ErrorKind,
-    // TODO: read this part of the rust book again and describe why this 
+    // TODO: read this part of the rust book again and describe why this
     // needs both the send and the sync bound
     pub source: Box<dyn std::error::Error + Send + Sync>,
 }
 
 impl Display for RepoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Encountered a Repository Error:\nKind: {}\nSource: {}\n", self.kind, self.source)
+        write!(
+            f,
+            "Encountered a Repository Error:\nKind: {}\nSource: {}\n",
+            self.kind, self.source
+        )
     }
 }
 
 impl std::error::Error for RepoError {}
 
 // define a repository interface that can be implemented by repository structs
-// this way the web socket handler code can depend on the repository interface 
+// this way the web socket handler code can depend on the repository interface
 // instead of depending on the repository implementation
 
 // define domain models at the repository interface level, this way they can be shared
@@ -63,22 +71,25 @@ impl std::error::Error for RepoError {}
 //     pub payload: Vec<u8>,
 // }
 
+// type StateVector = [(u64, u32)];
+pub type ClientDeletionSet = Vec<Range<u32>>;
+
 // Add these super-traits
 // Send: the repository needs to be able to move between threads, this is required by the tokio runtime
 // Clone: the repository needs to be cloneable to that axum can pass a copy of the repository
 //        struct to the handler for each invocation of the handler
-// 'static: the repository must be static so that the ws.on_upgrade trait bound is satisfied. This 
+// 'static: the repository must be static so that the ws.on_upgrade trait bound is satisfied. This
 //          is what guarantees the compiler that the repository does not internally contain references
 //          to data that may be dropped during the lifetime of the handlers execution
 
 // Creates a specialized version of a base trait that adds bounds to async fn and/or -> impl Trait return types.
 // https://docs.rs/trait-variant/latest/trait_variant/attr.make.html
 // This is quite sus, ^this project has few github stars
-// we can use this macro to rewrite the trait such that the async functions are de-sugared and explicitly 
+// we can use this macro to rewrite the trait such that the async functions are de-sugared and explicitly
 // include the trait bound on the returned future
 // this is better than de-sugaring manually I guess
 
-// This is necessary because the future returned by an async trait does not automatically 
+// This is necessary because the future returned by an async trait does not automatically
 // have the Send trait. This is required by the tokio runtime so that futures can be passed
 // between cores. We use this macro to indicate that all structs that implement this trait
 // must do so in such a way that the futures returned are Send.
@@ -89,15 +100,36 @@ pub trait Repository: Send + Sync + Clone + 'static {
     // async fn write_message(&self, message: RepoMessage) -> Result<(), RepoError>;
     // write operation should use first write wins semantics for writes with the key (topic_id, client_id, offset)
     async fn write_operation(
-        &self, 
+        &self,
         topic_id: Uuid,
         user_id: Uuid,
         client_id: u64,
         offset: u32,
         payload: &[u8],
     ) -> Result<(), RepoError>;
-    async fn read_operations_after(&self, state_vector: &[(u64, u32)], topic_id: Uuid) -> Result<Vec<Vec<u8>>, RepoError>;
-    async fn read_last_received_offset(&self, topic_id: Uuid, client_id: u64) -> Result<Option<u32>, RepoError>;
+    async fn read_operations_after(
+        &self,
+        state_vector: &[(u64, u32)],
+        topic_id: Uuid,
+    ) -> Result<Vec<Vec<u8>>, RepoError>;
+    async fn read_doc_deletion_set(
+        &self,
+        topic_id: Uuid,
+    ) -> Result<HashMap<u64, ClientDeletionSet>, RepoError>;
+    // TODO: should we be accepting DeletionSet as a referent to a vector here or
+    // a reference to a slice? Do we need to be explicit in wether the return type
+    // is a slice or a vector?
+    async fn write_deletion_set_if_novel(
+        &self,
+        topic_id: Uuid,
+        user_id: Uuid,
+        deletion_set: &HashMap<u64,ClientDeletionSet>,
+    ) -> Result<bool, RepoError>;
+    async fn read_last_received_offset(
+        &self,
+        topic_id: Uuid,
+        client_id: u64,
+    ) -> Result<Option<u32>, RepoError>;
 }
 
 // hopefully when we want to stub out the repository implementation when performing

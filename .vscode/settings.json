@@ -16,6 +16,8 @@
     "jetstream",
     "mpbench",
     "mpsc",
+    "multirange",
+    "multiranges",
     "nxyt",
     "Oapi",
     "oneshot",
@@ -49,6 +51,7 @@
     "Timestamptz",
     "townsag",
     "tungstenite",
+    "upserts",
     "ywasm"
   ]
 }

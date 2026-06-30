@@ -66,6 +66,8 @@ impl PgRepo {
     }
 }
 
+#[derive(sqlx::Type)]
+#[sqlx(transparent)]
 struct PgRangeWrapper(PgRange<i64>);
 
 impl From<PgRangeWrapper> for Range<u32> {
@@ -345,38 +347,61 @@ impl Repository for PgRepo {
         &self,
         topic_id: uuid::Uuid,
         user_id: uuid::Uuid,
-        client_id: u64,
-        deletion_set: &super::ClientDeletionSet,
+        deletion_set: &HashMap<u64,super::ClientDeletionSet>,
     ) -> Result<bool, RepoError> {
+        /* 
+        goal: we want to create rows of (client_id, int8multirange)
+        tools:
+            - unnest will destructure an array into a bag of rows 
+            - multirange converts a range into a multirange with just one range in it
+            - range_agg will merge many multiranges
+        Approach:
+            - flatten the mapping (client_id, Vec<Range<u32>>) into the array Vec<(client_id, Range<u32>)>
+              where the client_id is associated with each Range<u32> in it's corresponding Vec of ranges
+            - merge the ranges into a multirange at the db using range_agg(multirange())
+        */
         let start = Instant::now();
-        let pg_ranges: Vec<PgRange<i64>> = deletion_set
-            .iter()
-            .cloned()
-            .map(|r| r.into())
-            .map(|w: PgRangeWrapper| w.0)
-            .collect();
+        let mut flat_client_ids: Vec<i64> = Vec::new();
+        let mut flat_pg_ranges: Vec<PgRangeWrapper> = Vec::new();
+
+        for (&client_id, client_deletion_set) in deletion_set.iter() {
+            for range in client_deletion_set.iter().cloned() {
+                flat_client_ids.push(client_id as i64);
+                flat_pg_ranges.push(range.into());
+            }
+        }
         let result = sqlx::query!(
+            // reference this: https://github.com/transact-rs/sqlx/issues/294
+            // use unnest to destructure arrays of values for each column into
+            // records in a cte
+            // upserts is a cte of TRUE records for each successful insertion
+            // if upserts is empty that means that either the delete set was 
+            // empty or all the elements in the delete set were not novel
+            // relative to the values that are in the database
             r#"WITH merged AS (
-                SELECT range_agg(multirange(range)) AS merged_multirange
-                FROM unnest($1::int8range[]) AS range
+                SELECT id, range_agg(multirange(range)) AS merged_multirange
+                FROM unnest($1::bigint[], $2::int8range[]) AS ranges(id, range)
+                GROUP BY id
+            ), upserts AS (
+                INSERT INTO deletions (topic_id, user_id, client_id, delete_set)
+                SELECT $3, $4, id, merged_multirange
+                FROM merged
+                ON CONFLICT (topic_id, client_id) DO UPDATE
+                    SET delete_set = deletions.delete_set + excluded.delete_set
+                    WHERE NOT deletions.delete_set @> excluded.delete_set
+                RETURNING TRUE
             )
-            INSERT INTO deletions (topic_id, user_id, client_id, delete_set)
-            SELECT $2, $3, $4, merged_multirange
-            FROM merged
-            ON CONFLICT (topic_id, client_id) DO UPDATE
-                SET delete_set = deletions.delete_set + excluded.delete_set
-                WHERE NOT deletions.delete_set @> excluded.delete_set
-            RETURNING TRUE AS "performed_insert!""#,
-            &pg_ranges,
+            SELECT EXISTS (SELECT 1 FROM upserts) AS "performed_insert!""#,
+            &flat_client_ids,
+            // this helps the compiler know which trait to use to serialize flat_pg_ranges
+            &flat_pg_ranges as &[PgRangeWrapper],
             topic_id,
             user_id,
-            client_id as i64,
         )
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await;
         let ret = match result {
-            Ok(Some(r)) => Ok(r.performed_insert),
-            Ok(None) => Ok(false),
+            Ok(r) => Ok(r.performed_insert),
             Err(e @ sqlx::Error::InvalidArgument(_)) => Err(RepoError {
                 kind: ErrorKind::SchemaMismatch,
                 source: Box::new(e),
@@ -408,7 +433,11 @@ mod tests {
     use crate::repository::{self, RepoError, Repository, postgres::PgRepo};
     use sqlx::{Pool, Postgres};
     use sqlx_tracing::Pool as TracedPool;
-    use std::{ops::Range, vec};
+    use std::{
+        ops::Range, 
+        vec,
+        collections::HashMap,
+    };
     use uuid::Uuid;
 
     #[sqlx::test]
@@ -534,16 +563,17 @@ mod tests {
         Ok(())
     }
     #[sqlx::test]
-    async fn test_read_write_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
+    async fn test_write_read_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
         // create a repo object from the pool
         let repo = PgRepo::new(TracedPool::from(pool));
         // create a deletion set to be inserted
-        let delete_set: repository::ClientDeletionSet =
-            vec![Range { start: 0, end: 3 }, Range { start: 7, end: 9 }];
         let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
+        let delete_set: HashMap<u64, repository::ClientDeletionSet> = HashMap::from([
+            (client_id, vec![Range { start: 0, end: 3 }, Range { start: 7, end: 9 }]),
+        ]);
         // insert the deletion set, asserting that the deletion set actually was inserted
         let was_inserted = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id, &delete_set)
+            .write_deletion_set_if_novel(topic_id, user_id, &delete_set)
             .await?;
         assert!(
             was_inserted,
@@ -559,11 +589,15 @@ mod tests {
                 // concerned with the fact that each range is present and there are no
                 // extra ranges.
                 assert_eq!(
-                    delete_set.len(),
+                    delete_set.get(&client_id).unwrap().len(),
                     ret_deletion_set.len(),
                     "the returned deletion set is a different size than the written deletion set",
                 );
-                let has_all_deletes = delete_set.iter().all(|r| ret_deletion_set.contains(r));
+                let has_all_deletes = delete_set
+                    .iter()
+                    .all(|(_, ranges)| {
+                        ranges.iter().all(|r| ret_deletion_set.contains(r))
+                    });
                 assert!(
                     has_all_deletes,
                     "a delete from delete set {:?} was missing from returned delete set {:?}",
@@ -577,11 +611,15 @@ mod tests {
     async fn test_write_redundant_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let repo = PgRepo::new(TracedPool::from(pool));
         let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
-        let first_delete = vec![Range { start: 0, end: 4 }, Range { start: 6, end: 18 }];
-        let second_delete = vec![Range { start: 1, end: 4 }, Range { start: 6, end: 9 }];
+        let first_delete = HashMap::from([
+            (client_id, vec![Range { start: 0, end: 4 }, Range { start: 6, end: 18 }])
+        ]);
+        let second_delete = HashMap::from([
+            (client_id, vec![Range { start: 1, end: 4 }, Range { start: 6, end: 9 }])
+        ]);
         // write a delete set to the table
         let first_write = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id, &first_delete)
+            .write_deletion_set_if_novel(topic_id, user_id, &first_delete)
             .await?;
         assert!(
             first_write,
@@ -589,7 +627,7 @@ mod tests {
         );
         // attempt to write a second delete set to the table that is a subset of the first delete set
         let second_write = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id, &second_delete)
+            .write_deletion_set_if_novel(topic_id, user_id, &second_delete)
             .await?;
         assert!(
             !second_write,
@@ -604,7 +642,9 @@ mod tests {
         );
         if let Some(ds) = client_delete_set {
             assert!(
-                *ds == first_delete,
+                // rust equivalence will implicitly dereference here so that we can use the 
+                // partial equals trait
+                ds == first_delete.get(&client_id).expect("client_id missing from delete set"),
                 "expected the read client delete set to match the first delete found that it did not match",
             )
         }
@@ -614,12 +654,15 @@ mod tests {
     async fn test_write_overlapping_delete_set(pool: Pool<Postgres>) -> Result<(), RepoError> {
         let repo = PgRepo::new(TracedPool::from(pool));
         let (topic_id, user_id, client_id) = (Uuid::new_v4(), Uuid::new_v4(), 1 as u64);
-        let first_delete: Vec<Range<u32>> =
-            vec![Range { start: 0, end: 3 }, Range { start: 5, end: 7 }];
-        let second_delete: Vec<Range<u32>> = vec![Range { start: 3, end: 5 }];
+        let first_delete: HashMap<u64,Vec<Range<u32>>> = HashMap::from([
+            (client_id, vec![Range { start: 0, end: 3 }, Range { start: 5, end: 7 }])
+        ]);
+        let second_delete: HashMap<u64, Vec<Range<u32>>> = HashMap::from([
+            (client_id, vec![Range { start: 3, end: 5 }])
+        ]);
         // write a delete set to the table
         let first_write = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id, &first_delete)
+            .write_deletion_set_if_novel(topic_id, user_id, &first_delete)
             .await?;
         assert!(
             first_write,
@@ -628,7 +671,7 @@ mod tests {
         // write a second delete set to the table with some overlapping values with the first
         // delete set
         let second_write = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id, &second_delete)
+            .write_deletion_set_if_novel(topic_id, user_id, &second_delete)
             .await?;
         // validate that the result of the second write indicated that the second write went through
         assert!(
@@ -653,11 +696,15 @@ mod tests {
         let repo = PgRepo::new(TracedPool::from(pool));
         let (topic_id, user_id, client_id_a, client_id_b) =
             (Uuid::new_v4(), Uuid::new_v4(), 1 as u64, 2 as u64);
-        let delete_set_a: Vec<Range<u32>> = vec![Range { start: 2, end: 4 }];
-        let delete_set_b: Vec<Range<u32>> = vec![Range { start: 3, end: 9 }];
+        let delete_set_a: HashMap<u64, Vec<Range<u32>>> = HashMap::from([
+            (client_id_a, vec![Range { start: 2, end: 4 }])
+        ]);
+        let delete_set_b: HashMap<u64, Vec<Range<u32>>> = HashMap::from([
+            (client_id_b, vec![Range { start: 3, end: 9 }])
+        ]);
         // insert a delete set for one client
         let write_a = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id_a, &delete_set_a)
+            .write_deletion_set_if_novel(topic_id, user_id, &delete_set_a)
             .await?;
         assert!(
             write_a,
@@ -665,7 +712,7 @@ mod tests {
         );
         // insert a delete set for a different client but the same topic id
         let write_b = repo
-            .write_deletion_set_if_novel(topic_id, user_id, client_id_b, &delete_set_b)
+            .write_deletion_set_if_novel(topic_id, user_id, &delete_set_b)
             .await?;
         assert!(
             write_b,
@@ -675,17 +722,21 @@ mod tests {
         let delete_set_topic = repo.read_doc_deletion_set(topic_id).await?;
         // verify that the two insertions are independent
         assert_eq!(
-            *delete_set_topic
+            delete_set_topic
                 .get(&client_id_a)
                 .expect("delete set for client a was not read from the database"),
-            delete_set_a,
+            delete_set_a
+                .get(&client_id_a)
+                .expect("delete set for client a not read from hard coded input"),
             "expected the delete set for client a written to the db to match the delete set read from the db",
         );
         assert_eq!(
-            *delete_set_topic
+            delete_set_topic
                 .get(&client_id_b)
                 .expect("delete set for client b was not read from the database"),
-            delete_set_b,
+            delete_set_b
+                .get(&client_id_b)
+                .expect("delete set for client b not found in hard coded input"),
             "expected the delete set for client b written to the db to match the delete set read from the db"
         );
         Ok(())

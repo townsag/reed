@@ -123,8 +123,7 @@ pub trait Repository: Send + Sync + Clone + 'static {
         &self,
         topic_id: Uuid,
         user_id: Uuid,
-        client_id: u64,
-        deletion_set: &ClientDeletionSet,
+        deletion_set: &HashMap<u64,ClientDeletionSet>,
     ) -> Result<bool, RepoError>;
     async fn read_last_received_offset(
         &self,

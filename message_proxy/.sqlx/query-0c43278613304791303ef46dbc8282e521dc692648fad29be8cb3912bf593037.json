@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doc_deletion_set AS(\n                SELECT client_id, unnest(delete_set) as deletion_range\n                FROM deletions\n                WHERE topic_id = $1\n            )\n            SELECT client_id, array_agg(deletion_range) as \"client_deletion_set!\"\n            FROM doc_deletion_set\n            GROUP BY client_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_deletion_set!",
+        "type_info": "Int8RangeArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "0c43278613304791303ef46dbc8282e521dc692648fad29be8cb3912bf593037"
+}

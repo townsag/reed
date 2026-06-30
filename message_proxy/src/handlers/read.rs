@@ -5,6 +5,7 @@ use tokio::sync::oneshot::{
     Sender
 };
 use yrs::updates::encoder::Encode;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use std::ops::Range;
@@ -129,7 +130,7 @@ impl <R: Repository> WebsocketHandler<R> {
     fn parse_message(
         &self,
         encoded_update: &Vec<u8>,
-    ) -> Result<(Option<u32>, Option<ClientDeletionSet>), TaskError> {
+    ) -> Result<(Option<u32>, Option<HashMap<u64,ClientDeletionSet>>), TaskError> {
         // decoded Updates cannot be held across await boundaries because it is not send
         // when possible, we need to drop the update before an await boundary
         let decoded_update = Update::decode_v1(&encoded_update)?;
@@ -163,23 +164,25 @@ impl <R: Repository> WebsocketHandler<R> {
         };
 
         let deletions: &DeleteSet = decoded_update.delete_set();
-        // DeleteSet does not expose a get method for accessIng the underlying IdSet so 
-        // I have to use this iter().find() access method
-
+        /*
+        Dearest Reader,
+        You may be wondering why we iterate through all the elements in the delete set to copy
+        them instead of just copying the delete set and extracting the client_id range from the copied
+        delete set. This is because the IdSet field in the delete set is private, this is the way
+        I have thought of so far to access the underlying delete set using the public interface 
+        of the delete set
+         */
         // iter iterates over references to key value pairs in the IdSet hashmap
-        // find takes reference to the elements that we are iterating over
-        // for this reason k and v are both && (double references)
-        // we can use the &k pattern to destructure the &&element into a u64 and 
-        // &&IdRange because u64 implements the copy trait. We do not have to take
-        // ownership of the k symbol
-        let client_deletion_set: Option<Vec<Range<u32>>> = deletions.iter()
-            // find takes a mutable reference to the element
-            .find(|(k, _)| **k == self.client_id)
-            // map takes the element itself
-            .map(|(_, id_range)| {
-                // iterate over ranges in the IdRange
-                id_range.iter().cloned().collect()
-            });
+        let client_deletion_set: Option<HashMap<u64,Vec<Range<u32>>>> = {
+            let tmp: HashMap<u64, Vec<Range<u32>>> = deletions.iter()
+                // map takes the element itself but the element has two references 
+                .map(|(&client_id, id_range)| {
+                    // iterate over ranges in the IdRange
+                    (client_id, id_range.iter().cloned().collect())
+                })
+                .collect();
+            (!tmp.is_empty()).then_some(tmp)
+        };
 
         Ok((new_offset, client_deletion_set))
     }
@@ -229,7 +232,7 @@ impl <R: Repository> WebsocketHandler<R> {
             // attempt to write the deletions to the deletions table, saving wether or not 
             // the deletions were persisted
             persisted_deletion = self.repo.write_deletion_set_if_novel(
-                self.topic_id, self.user_id, self.client_id, deletion_set
+                self.topic_id, self.user_id, deletion_set
             ).await?;
         }
         // broadcast the message if it had either novel updates or novel deletions
@@ -269,9 +272,9 @@ impl <R: Repository> WebsocketHandler<R> {
             Level::INFO,
             new_offset,
             duration_ns=start.elapsed().as_nanos(),
-            skipped_write_update=message_outcome.persisted_update,
-            skipped_write_delete=message_outcome.persisted_deletion,
-            skipped_broadcast=message_outcome.broadcast_message,
+            skipped_write_update=!message_outcome.persisted_update,
+            skipped_write_delete=!message_outcome.persisted_deletion,
+            skipped_broadcast=!message_outcome.broadcast_message,
             update_size_bytes,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -296,9 +299,9 @@ impl <R: Repository> WebsocketHandler<R> {
             name: "reader_hot_path_canonical_log_line",
             Level::INFO,
             new_offset,
-            skipped_write_update=message_outcome.persisted_update,
-            skipped_write_delete=message_outcome.persisted_deletion,
-            skipped_broadcast=message_outcome.broadcast_message,
+            skipped_write_update=!message_outcome.persisted_update,
+            skipped_write_delete=!message_outcome.persisted_deletion,
+            skipped_broadcast=!message_outcome.broadcast_message,
             update_size_bytes,
             duration_ns = start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),

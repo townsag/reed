@@ -2,6 +2,7 @@
 - scale to many concurrent editors of a document
 
 ## Technical requirement:
+- [ ] identify where we are dropping logs...!!!
 - at 100 concurrent editors writing 200 operations per minute to a document, we are seeing 20,000 writes per minute or 333 writes per second
     - each of these writes is very small, a handful of bytes
     - nonetheless I am seeing very high latency in the websocket read path 

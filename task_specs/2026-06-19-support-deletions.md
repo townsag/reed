@@ -27,20 +27,20 @@
     - this might take about 750 microseconds (us) to read from disk or 50 us to send over local ethernet 1gb/s
 
 ## Technical Requirements:
-- [ ] allow deletions in the tui
-    - [ ] wire up deletions to the correct yrs operation then send the corresponding update messages over the websocket connection
-- [ ] accept deletions in the server
-    - [ ] any place that an update or client sync step two message can be received we should be able to accept messages that have no insertions in them but do have deletions
+- [x] allow deletions in the tui
+    - [x] wire up deletions to the correct yrs operation then send the corresponding update messages over the websocket connection
+- [x] accept deletions in the server
+    - [x] any place that an update or client sync step two message can be received we should be able to accept messages that have no insertions in them but do have deletions
         - the previous behavior was to drop all messages that did not have any new insertions. The updated behavior should be to drop messages that have no new insertions and no deletions
-        - [ ] client sync step two
-        - [ ] update message
-- [ ] make deletions durable
-    - [ ] store the deletion set as an int8 multi range in postgres in a new deletions table
+        - [x] client sync step two
+        - [x] update message
+- [x] make deletions durable
+    - [x] store the deletion set as an int8 multi range in postgres in a new deletions table
         - pk: (topic_id, client_id)
-        - [ ] create a migration that adds the deletion table
+        - [x] create a migration that adds the deletion table
         - [ ] add to the repository interface and implementation
-            - [ ] read entire deletion set for a document
-            - [ ] add deletion set to the document if the deletion set contains novel deletions, returning true if the deletion set contained novel deletions
+            - [x] read entire deletion set for a document
+            - [x] add deletion set to the document if the deletion set contains novel deletions, returning true if the deletion set contained novel deletions
             - [ ] decide if we want to use a write transaction to add update and if they should use the same sql statement or different sql statements
                 - for data consistency, we probably want them to fail atomically, even if deletions are associative and idempotent
     - behavior
@@ -62,19 +62,22 @@
             - persist_update = has_update && new_offset >= perv_offset
             - persist_delete = has_delete && !(client_delete_multirange @> new_delete_multirange)
             - broadcast messages = persist_update || persist_delete 
-    - [ ] client sync step two messages
-        - [ ] parse the deletion set out of the client sync step two message
-            - [ ] client sync step two message should include only the deletion set for the client_id which is sending the message
-        - [ ] parse the update set out of the client sync step two message
-        - [ ] implement the behavior described in the table 
-    - [ ] client update messages:
-        - [ ] parse the deletion set out of the client update message
-        - [ ] parse the update set out of the client update message
-        - [ ] implement behavior described in the table
-- [ ] broadcast to connected clients
-    - [ ] messages that have either novel deletes or novel insertions should be broadcast to all connected clients
-- [ ] sent to new clients on handshake
-    - [ ] manually construct a server sync step two message that includes the entire delete set for that document
+    - [x] client sync step two messages
+        - [x] parse the deletion set out of the client sync step two message
+            - [x] client sync step two message should include only the deletion set for the client_id which is sending the message
+        - [x] parse the update set out of the client sync step two message
+        - [x] implement the behavior described in the table 
+    - [x] client update messages:
+        - [x] parse the deletion set out of the client update message
+        - [x] parse the update set out of the client update message
+        - [x] implement behavior described in the table
+- [x] broadcast to connected clients
+    - [x] messages that have either novel deletes or novel insertions should be broadcast to all connected clients
+- [x] sent to new clients on handshake
+    - [x] manually construct a server sync step two message that includes the entire delete set for that document
+        - [x] read the delete set from the database
+        - [x] modify the merged update message to include the delete set from the database
+            - there will always be updates in the database if there are also deletes..?
 
 ## Known limitations:
 - if deletion only messages are dropped at the message bus level, we will have no way of knowing that they were dropped because deletion only messages do not have a contiguous sequence number from which we could detect holes

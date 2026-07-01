@@ -19,10 +19,10 @@ use opentelemetry::{
     global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
 };
 use tracing::{
-    Level, Subscriber, field::{Field, Visit}
+    Level, field::{Field, Visit}
 };
 use tracing_subscriber::{
-    self, EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt
+    self, EnvFilter, Layer, layer::{self, SubscriberExt}, util::SubscriberInitExt
 };
 use tracing_opentelemetry;
 use std::{env, time::Duration};
@@ -178,18 +178,31 @@ impl Visit for ClientIdExtractor {
     }
 }
 
-struct ClientSampleLayer{}
+struct ClientLayerFilter{
+    filtering_enabled: bool
+}
 
-impl <S: Subscriber> Layer<S> for ClientSampleLayer {
-    fn event_enabled(&self, _event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) -> bool {
+impl <S> layer::Filter<S> for ClientLayerFilter {
+    fn enabled(
+        &self,
+        _meta: &tracing::Metadata<'_>,
+        _cx: &layer::Context<'_,S>,
+    ) -> bool {
+        return true;
+    }
+    fn event_enabled(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: &tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
         // allow all events with severity level higher than info
-        if *_event.metadata().level() <= Level::WARN {
+        if *event.metadata().level() <= Level::WARN || !self.filtering_enabled {
             return true;
         }
         // need to construct a visitor that records the client_id_src field of the log 
         // https://docs.rs/tracing-core/latest/tracing_core/field/trait.Visit.html
         let mut visitor = ClientIdExtractor::new();
-        _event.record(&mut visitor);
+        event.record(&mut visitor);
         
         match visitor.client_id_src {
             // allow all events with client_id_src values that evenly divide by 10
@@ -245,21 +258,30 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
     // filtering with a target will filter an event by default then only include the event if it 
     // passes the target filter. This is different than the behavior that we want. Instead we want
     // to include the event by default then filter out events 
+    let mp_module_log_level = env::var("RUST_LOG_MP_MODULE").unwrap_or("warn".into());
     let filter_fmt = EnvFilter::try_from_default_env()
         .expect("failed to parse log level env var: RUST_LOG")
-        .add_directive("message_proxy=warn".parse().unwrap())
+        .add_directive(format!("message_proxy={}", mp_module_log_level).parse().unwrap())
         .add_directive("sqlx=warn".parse().unwrap())
         .add_directive("h2=info".parse().unwrap())
         .add_directive("tower=info".parse().unwrap())
         .add_directive("opentelemetry-otlp=info".parse().unwrap())
         .add_directive("opentelemetry_sdk=info".parse().unwrap());
 
-    // let level = filter_otel.max_level_hint();
-    let client_sample_layer = ClientSampleLayer{};
+    let client_id_filtering_enabled = env::var("CLIENT_ID_FILTERING_ENABLED")
+        .unwrap_or("false".into())
+        .parse::<bool>()
+        .expect("failed to parse CLIENT_ID_FILTERING_ENABLED env var, must be one of 'true' or 'false'");
+    let client_sample_filter = ClientLayerFilter{
+        filtering_enabled: client_id_filtering_enabled,
+    };
     
     // set up logging related otel <--> rust machinery
     let otel_logging_layer = OpenTelemetryTracingBridge::new(&providers.logger_provider)
-        .with_filter(filter_otel);
+        .with_filter(filter_otel)
+        // this layer removed logs that have client_id and are not Warn or higher and are from client_ids that
+        // are not sampled
+        .with_filter(client_sample_filter);
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_filter(filter_fmt);
         // .with_filter(filter_fmt_message_proxy);
@@ -272,9 +294,6 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         // this tracing subscriber fmt layer sits at a higher level relative to the otel stdout log exporter
         // using this layer as opposed to the stdout exporter means fewer function calls and heap allocations
         .with(fmt_layer)
-        // this layer removed logs that have client_id and are not Warn or higher and are from client_ids that
-        // are not sampled
-        .with(client_sample_layer)
         // add the layer to the tracing subscriber registry that forwards logs from the tracing subscriber
         // to the otel logging provider
         .with(otel_logging_layer)

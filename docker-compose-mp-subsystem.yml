@@ -70,6 +70,8 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
       - RUST_LOG=debug
+      - RUST_LOG_MP_MODULE=warn
+      - CLIENT_ID_FILTERING_ENABLED=true
       - RUST_BACKTRACE=full
       - OTEL_METRIC_EXPORT_INTERVAL=5000
       # ^ in milliseconds

@@ -1,8 +1,13 @@
 use std::clone::Clone;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::broadcast::{
-    self, Receiver, Sender, error::RecvError,
+    self, Receiver, Sender, error::RecvError, error::SendError,
+};
+use tokio::sync::mpsc::{
+    Sender as MPSCSender,
+    error::TrySendError,
 };
 use uuid::Uuid;
 // use the std implementation of Mutex because we don't have to hold the lock across await points
@@ -21,7 +26,8 @@ use axum::body::Bytes;
 // remove the clone trait bound on message by using Arc
 // send reference counted pointers to messages through the channels
 
-const BUFFER_SIZE: usize = 100;
+// const BUFFER_SIZE: usize = 100;
+const BUFFER_SIZE: usize = 20_000;
 
 pub trait Key: Eq + Hash + Clone + Debug {}
 
@@ -53,37 +59,137 @@ impl Routable for BrokerMessage {
         return &self.source_id;
     }
 }
+/*
+- what is actually happening here
+    - we are defining a trait called HasNatsClient and then implementing that trait on
+      two empty structs Present and Missing
+    - we parameterize the BrokerBuilder struct using the HasNatsClient trait and add a
+      PhantomData field holding one of our empty structs
+        - this allows us to know at compile time if the nats client field has been set
+          on the builder and restrict some methods to only work on instances of the 
+          builder that already have the nats client 
+    - we create an associated type for the HasNatsClient trait indicating what the type
+      of the nats_client field is 
+        - this allows us to store and empty tuple in the broker builder struct when the 
+          nats client is missing instead of storing an option type
+        - unfortunately, this requires using generic associated types because the nats
+          client is parameterized by message type
+            - this is overcomplicated
+- There exists an simpler way to do this
+    - if we were to create two different structs, one for builder without nats client and
+      one for builder with nats client, then we do not have to use the generic associated
+      type to parameterize the nats_client_sender type
+    - that approach requires defining the set buffer size method on each struct though
+*/
+struct Present {}
+struct Missing {}
+trait HasNatsClient {
+    type Sender<M: Routable + Clone>;
+}
+impl HasNatsClient for Present {
+    type Sender<M: Routable + Clone> = MPSCSender<M>;
+}
+impl HasNatsClient for Missing {
+    type Sender<M: Routable + Clone> = ();
+}
 
 /*
 Using the builder pattern for the broker accomplishes two things:
 - we can add ergonomic ways to make many configurations in the future
 - we can prevent the run method of the broker from being scheduled twice
 */
-pub struct BrokerBuilder {
-    buffer_size: usize
+pub struct BrokerBuilder <N: HasNatsClient, M: Routable + Clone> {
+    buffer_size: usize,
+    nats_client_sender: N::Sender<M>,
+    state: std::marker::PhantomData<N>,
 }
 
-impl BrokerBuilder {
+impl <M: Routable + Clone> Default for BrokerBuilder<Missing, M> {
+fn default() -> Self {
+        BrokerBuilder { buffer_size: BUFFER_SIZE, nats_client_sender: (), state: PhantomData }
+    }
+}
+
+impl <N: HasNatsClient, M: Routable + Clone> BrokerBuilder <N, M> {
     pub fn buffer_size(mut self, buffer_size: usize) -> Self {
         self.buffer_size = buffer_size;
         self
     }
+}
 
-    pub fn build<TopicId: Key, M: Routable + Clone>(self) -> Broker<TopicId, M> {
+impl <M: Routable + Clone> BrokerBuilder<Missing, M> {
+    // TODO: verify that this can still be called using function chaining
+    pub fn nats_client_sender(
+        self,
+        nats_client_sender: MPSCSender<M>,
+    ) -> BrokerBuilder<Present, M> {
+        BrokerBuilder { 
+            buffer_size: self.buffer_size,
+            nats_client_sender: nats_client_sender, 
+            state: PhantomData
+        }
+    }
+}
+
+impl <M: Routable + Clone> BrokerBuilder<Present, M> {
+    pub fn build<TopicId: Key>(
+        self,
+    ) -> Broker<TopicId, M> {
         Broker{
             topics: Arc::new(Mutex::new(
                 HashMap::<TopicId, Sender<M>>::new()
             )),
+            // we create a rc pointer to the nats client sender instead of copying
+            // it because we do not want to increase the sender count for this 
+            // mpsc channel
+            nats_client_sender: Arc::new(self.nats_client_sender),
             buffer_size: self.buffer_size,
         }
     }
 }
 
-impl Default for BrokerBuilder {
-    fn default() -> Self {
-        BrokerBuilder { buffer_size: BUFFER_SIZE }
+pub struct WrappedSender<TopicId: Key, M: Routable + Clone> {
+    topic_id: TopicId,
+    broadcast_sender: Sender<M>,
+    sender_nats_client: MPSCSender<M>,
+}
+
+pub enum WrappedSenderError <M> {
+    Broadcast(SendError<M>),
+    NatsClient(TrySendError<M>),
+}
+
+impl <M> From<SendError<M>> for WrappedSenderError<M> {
+    fn from(value: SendError<M>) -> Self {
+        WrappedSenderError::Broadcast(value)
     }
 }
+
+impl <M> From<TrySendError<M>> for WrappedSenderError<M> {
+    fn from(value: TrySendError<M>) -> Self {
+        WrappedSenderError::NatsClient(value)
+    }
+}
+
+impl <TopicId: Key, M: Routable + Clone> WrappedSender<TopicId, M> {
+    /// fails with short circuit behavior to send the value on the broadcast channel
+    /// Secondly tries to send the message on the mpsc channel to the nats client
+    /// An error type return with the try send error means the broadcast send
+    /// was still successful
+    // TODO: this behavior is unintuitive, update it to return two different errors
+    // or one result and one optional result
+    fn send(&self, value: M) -> Result<usize, WrappedSenderError<M>> {
+        // send the value to the broadcast channel, surface any errors that 
+        // are encountered here so that they may be recorded by the calling code
+        let count_subscribers = self.broadcast_sender.send(value.clone())?;
+        // send the value to the nats client
+        // surface errors corresponding to failure to send so they may be recorded at the calling code
+        self.sender_nats_client.try_send(value)?;
+
+        Ok(count_subscribers)
+    }
+}
+
 
 pub struct WrappedReceiver<TopicId: Key, M: Routable + Clone> {
     topic_id: TopicId,
@@ -129,15 +235,11 @@ impl<TopicId: Key, M: Routable + Clone> WrappedReceiver<TopicId, M> {
 pub struct Broker<TopicId: Key, M: Routable + Clone> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
     topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
+    nats_client_sender: Arc<MPSCSender<M>>,
     buffer_size: usize,
 }
 
 impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
-    // method that can be used by a websocket client to subscribe to a topic in the broker
-    // pub fn subscribe(&self, topic_id: M::Key) -> Subscription<M> {
-        
-    // }
-
     // TODO: may have to update this so that topic_id and client_id are two different key types
     pub fn register(&self, topic_id: TopicId) -> (Sender<M>, WrappedReceiver<TopicId, M>) {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
@@ -165,6 +267,15 @@ impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
         };
         (tx, wrx)
     }
+    /*
+    // this sender will be valid until the corresponding receiver is dropped
+    // the corresponding receiver is dropped when there are no more clients connected to
+    // this topic_id
+    pub fn get_sender(&self, topic_id: TopicId) -> Option<Sender<M>> {
+        let topics = self.topics.lock().unwrap();
+        topics.get(&topic_id).map(|tx| tx.clone())
+    }
+    */
 }
 
 pub fn get_id() -> usize {

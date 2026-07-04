@@ -15,6 +15,7 @@ use std::sync::{Mutex, Arc};
 use std::hash::Hash;
 use std::collections::HashMap;
 use axum::body::Bytes;
+use async_nats::Client;
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
 // lifetimes would work on that one
@@ -81,16 +82,19 @@ impl Routable for BrokerMessage {
       type to parameterize the nats_client_sender type
     - that approach requires defining the set buffer size method on each struct though
 */
-struct Present {}
-struct Missing {}
-trait HasNatsClient {
-    type Sender<M: Routable + Clone>;
+// TODO: figure out explicitly why these have to be public? Why does the calling code
+// need to access this trait or the structs implementing the trait if they are not 
+// using the BrokerBuilder type to name a variable,a etc.
+pub struct Present {}
+pub struct Missing {}
+pub trait HasNatsClient {
+    type Client;
 }
 impl HasNatsClient for Present {
-    type Sender<M: Routable + Clone> = MPSCSender<M>;
+    type Client = Client;
 }
 impl HasNatsClient for Missing {
-    type Sender<M: Routable + Clone> = ();
+    type Client = ();
 }
 
 /*
@@ -98,41 +102,43 @@ Using the builder pattern for the broker accomplishes two things:
 - we can add ergonomic ways to make many configurations in the future
 - we can prevent the run method of the broker from being scheduled twice
 */
-pub struct BrokerBuilder <N: HasNatsClient, M: Routable + Clone> {
+// TODO: rename the build method to run to communicate that it starts an async task
+// TODO: prevent the run method from being called twice using ownership rules
+pub struct BrokerBuilder <N: HasNatsClient> {
     buffer_size: usize,
-    nats_client_sender: N::Sender<M>,
+    nats_client: N::Client,
     state: std::marker::PhantomData<N>,
 }
 
-impl <M: Routable + Clone> Default for BrokerBuilder<Missing, M> {
+impl Default for BrokerBuilder<Missing> {
 fn default() -> Self {
-        BrokerBuilder { buffer_size: BUFFER_SIZE, nats_client_sender: (), state: PhantomData }
+        BrokerBuilder { buffer_size: BUFFER_SIZE, nats_client: (), state: PhantomData }
     }
 }
 
-impl <N: HasNatsClient, M: Routable + Clone> BrokerBuilder <N, M> {
+impl <N: HasNatsClient> BrokerBuilder <N> {
     pub fn buffer_size(mut self, buffer_size: usize) -> Self {
         self.buffer_size = buffer_size;
         self
     }
 }
 
-impl <M: Routable + Clone> BrokerBuilder<Missing, M> {
+impl BrokerBuilder<Missing> {
     // TODO: verify that this can still be called using function chaining
-    pub fn nats_client_sender(
+    pub fn nats_client(
         self,
-        nats_client_sender: MPSCSender<M>,
-    ) -> BrokerBuilder<Present, M> {
+        nats_client: Client,
+    ) -> BrokerBuilder<Present> {
         BrokerBuilder { 
             buffer_size: self.buffer_size,
-            nats_client_sender: nats_client_sender, 
+            nats_client: nats_client, 
             state: PhantomData
         }
     }
 }
 
-impl <M: Routable + Clone> BrokerBuilder<Present, M> {
-    pub fn build<TopicId: Key>(
+impl BrokerBuilder<Present> {
+    pub fn build<TopicId: Key, M: Routable + Clone>(
         self,
     ) -> Broker<TopicId, M> {
         Broker{
@@ -142,7 +148,7 @@ impl <M: Routable + Clone> BrokerBuilder<Present, M> {
             // we create a rc pointer to the nats client sender instead of copying
             // it because we do not want to increase the sender count for this 
             // mpsc channel
-            nats_client_sender: Arc::new(self.nats_client_sender),
+            nats_client: self.nats_client,
             buffer_size: self.buffer_size,
         }
     }
@@ -235,7 +241,8 @@ impl<TopicId: Key, M: Routable + Clone> WrappedReceiver<TopicId, M> {
 pub struct Broker<TopicId: Key, M: Routable + Clone> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
     topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
-    nats_client_sender: Arc<MPSCSender<M>>,
+    // nats client implements clone by itself, no need to wrap it in an arc
+    nats_client: Client,
     buffer_size: usize,
 }
 

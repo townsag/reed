@@ -9,6 +9,8 @@
         - this task should have ownership of the nats client
         - [ ] update the BrokerMessage struct and routable trait to differentiate between the topic_id and the client_id
             - this is so we can tell which subject to publish a messages on when it gets to the nats client 
+        - since the broker will need a copy of the nats client to create subscribers, the broker can take a copy of the nats client in its builder and create this task at the broker instead of the nats client and the task being globally scoped
+        - [ ] store the join handle for the task that reads from the channel and sends to nats core inside the broker so it can be stopped when the broker is dropped
     - [ ] add the sender for this nats core channel to the sender that reader tasks would use to broadcast messages to other clients
         - This is very similar to the internal implementation of the nats client. Implementing sending to the nats client this way is like wrapping a mpsc queue with another mpsc queue, it wastes memory and introduces unnecessary complexity and latency
         - However the nats client does not have a try_send option, sends to the nats client are blocking when the mpsc queue that the nats client uses to buffer messages is full

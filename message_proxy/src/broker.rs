@@ -1,21 +1,21 @@
 use std::clone::Clone;
-use std::fmt::Debug;
+use bytes::Bytes;
+use std::fmt::Display;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use futures::FutureExt;
 use tokio::sync::broadcast::{
     self, Receiver, Sender, error::RecvError, error::SendError,
 };
-use tokio::sync::mpsc::{
-    Sender as MPSCSender,
-    error::TrySendError,
-};
-use uuid::Uuid;
 // use the std implementation of Mutex because we don't have to hold the lock across await points
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
 use std::collections::HashMap;
-use axum::body::Bytes;
-use async_nats::Client;
+use async_nats::{
+    Client,
+    PublishError,
+};
+
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
 // lifetimes would work on that one
@@ -27,39 +27,20 @@ use async_nats::Client;
 // remove the clone trait bound on message by using Arc
 // send reference counted pointers to messages through the channels
 
-// const BUFFER_SIZE: usize = 100;
-const BUFFER_SIZE: usize = 20_000;
+// const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 100;
+const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 20_000;
 
-pub trait Key: Eq + Hash + Clone + Debug {}
-
-impl Key for Uuid {}
+pub trait ID: Eq + Hash + Clone + Display {}
+impl <T: Eq + Hash + Clone + Display> ID for T {}
 
 pub trait Routable {
-    type Key: Eq + Hash + Clone + Debug;
-    fn key(&self) -> &Self::Key;
+    type SubjectId: ID;
+    type SenderId: ID ;
+    fn subject_id(&self) -> Self::SubjectId;
+    fn sender_id(&self) -> Self::SenderId;
 }
 
-#[derive(Clone,Debug)]
-pub enum Payload {
-    Text(String),
-    // TODO: I don't like the idea of the broker enum depending on an
-    // axum type. There must be some more generic way to represent bytes
-    // that I can use here instead of axum bytes
-    Binary(Bytes),
-}
 
-#[derive(Clone,Debug)]
-pub struct BrokerMessage {
-    pub source_id: String, 
-    pub payload: Payload,
-}
-
-impl Routable for BrokerMessage {
-    type Key = String;
-    fn key(&self) -> &String {
-        return &self.source_id;
-    }
-}
 /*
 - what is actually happening here
     - we are defining a trait called HasNatsClient and then implementing that trait on
@@ -112,7 +93,7 @@ pub struct BrokerBuilder <N: HasNatsClient> {
 
 impl Default for BrokerBuilder<Missing> {
 fn default() -> Self {
-        BrokerBuilder { buffer_size: BUFFER_SIZE, nats_client: (), state: PhantomData }
+        BrokerBuilder { buffer_size: BROADCAST_CHANNEL_BUFFER_SIZE, nats_client: (), state: PhantomData }
     }
 }
 
@@ -138,73 +119,84 @@ impl BrokerBuilder<Missing> {
 }
 
 impl BrokerBuilder<Present> {
-    pub fn build<TopicId: Key, M: Routable + Clone>(
+    pub fn build<M: Routable + Clone + From<Bytes> + Into<Bytes>>(
         self,
-    ) -> Broker<TopicId, M> {
+    ) -> Broker<M> {
         Broker{
             topics: Arc::new(Mutex::new(
-                HashMap::<TopicId, Sender<M>>::new()
+                HashMap::<M::SubjectId, Sender<M>>::new()
             )),
-            // we create a rc pointer to the nats client sender instead of copying
-            // it because we do not want to increase the sender count for this 
-            // mpsc channel
             nats_client: self.nats_client,
             buffer_size: self.buffer_size,
         }
     }
 }
 
-pub struct WrappedSender<TopicId: Key, M: Routable + Clone> {
-    topic_id: TopicId,
+pub struct WrappedSender<M: Routable + Clone + From<Bytes> + Into<Bytes>> {
     broadcast_sender: Sender<M>,
-    sender_nats_client: MPSCSender<M>,
+    nats_client: Client,
 }
 
-pub enum WrappedSenderError <M> {
-    Broadcast(SendError<M>),
-    NatsClient(TrySendError<M>),
+pub enum WrappedNatsClientError {
+    NatsClientFailure(PublishError),
+    NatsClientSkipped,
 }
 
-impl <M> From<SendError<M>> for WrappedSenderError<M> {
-    fn from(value: SendError<M>) -> Self {
-        WrappedSenderError::Broadcast(value)
-    }
-}
+// pub struct SenderMetrics {
+//     // this value is only available on a successful send
+//     // maybe we need to differentiate between acceptable and 
+//     // critical partial failures
+//     broadcast_receivers: Option<usize>,
+//     len_nats_client_buff: usize,
+// }
 
-impl <M> From<TrySendError<M>> for WrappedSenderError<M> {
-    fn from(value: TrySendError<M>) -> Self {
-        WrappedSenderError::NatsClient(value)
-    }
-}
+// impl <M: Routable + Clone> From<SendError<M>> for WrappedSenderError<M> {
+//     fn from(value: SendError<M>) -> Self {
+//         WrappedSenderError::Broadcast(value)
+//     }
+// }
 
-impl <TopicId: Key, M: Routable + Clone> WrappedSender<TopicId, M> {
-    /// fails with short circuit behavior to send the value on the broadcast channel
-    /// Secondly tries to send the message on the mpsc channel to the nats client
+impl <M: Routable + Clone + From<Bytes> + Into<Bytes>> WrappedSender<M> {
+    /// Attempts to send the value on the broadcast channel
+    /// Secondly, attempts to publish the message to the nats channel via the nats client
     /// An error type return with the try send error means the broadcast send
     /// was still successful
-    // TODO: this behavior is unintuitive, update it to return two different errors
-    // or one result and one optional result
-    fn send(&self, value: M) -> Result<usize, WrappedSenderError<M>> {
+    /// This function is async but it will not block execution of the current task.
+    /// Sending a message to the broadcast channel is non blocking.
+    /// If the nats client buffer is full, we instead skip sending the message to 
+    /// nats core instead of blocking.
+    async fn send(&self, value: M) -> (Result<usize, SendError<M>>, Result<(), WrappedNatsClientError>) {
+        // ^decided to go with creating two different result types and letting the calling code differentiate
+        // between them. In this case the short circuit / mutual exclusion between the result types is
+        // implicit instead of explicit
+
         // send the value to the broadcast channel, surface any errors that 
         // are encountered here so that they may be recorded by the calling code
-        let count_subscribers = self.broadcast_sender.send(value.clone())?;
+        let result_broadcast = self.broadcast_sender.send(value.clone());
         // send the value to the nats client
         // surface errors corresponding to failure to send so they may be recorded at the calling code
-        self.sender_nats_client.try_send(value)?;
-
-        Ok(count_subscribers)
+        // publish is cancellation safe
+        let result_nats_client = match self.nats_client
+            .publish(format!("operations.{}", value.subject_id()), value.into())
+            .now_or_never() {
+                Some(publish_result) => {
+                    publish_result.map_err(WrappedNatsClientError::NatsClientFailure)
+                },
+                None => Err(WrappedNatsClientError::NatsClientSkipped),
+            };
+        (result_broadcast, result_nats_client)
     }
 }
 
 
-pub struct WrappedReceiver<TopicId: Key, M: Routable + Clone> {
-    topic_id: TopicId,
+pub struct WrappedReceiver<M: Routable + Clone> {
+    topic_id: M::SubjectId,
     // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
     receiver: Receiver<M>,
-    topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<M>>>>,
 }
 
-impl<TopicId: Key, M: Routable + Clone> Drop for WrappedReceiver<TopicId, M> {
+impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
     fn drop(&mut self) {
         // upon this receiver going out of scope, we need to check if there are any remaining
         // receivers open for this topic (other than this receiver) and delete the topic from
@@ -223,7 +215,7 @@ impl<TopicId: Key, M: Routable + Clone> Drop for WrappedReceiver<TopicId, M> {
     }
 }
 
-impl<TopicId: Key, M: Routable + Clone> WrappedReceiver<TopicId, M> {
+impl<M: Routable + Clone> WrappedReceiver<M> {
     // implementing the recv function on the wrapped receiver and making the underlying receiver
     // private means that clients can receive from the broadcast channel without being able to
     // clone the broadcast channel. This is important because we cleanup the topic from the topic
@@ -235,20 +227,17 @@ impl<TopicId: Key, M: Routable + Clone> WrappedReceiver<TopicId, M> {
     }
 }
 
-// update the broker implementation so that they key used to identify 
-// topics may be a different type than the key used to identify clients
 #[derive(Clone)]
-pub struct Broker<TopicId: Key, M: Routable + Clone> {
+pub struct Broker<M: Routable + Clone + From<Bytes> + Into<Bytes>> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<TopicId, Sender<M>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<M>>>>,
     // nats client implements clone by itself, no need to wrap it in an arc
     nats_client: Client,
     buffer_size: usize,
 }
 
-impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
-    // TODO: may have to update this so that topic_id and client_id are two different key types
-    pub fn register(&self, topic_id: TopicId) -> (Sender<M>, WrappedReceiver<TopicId, M>) {
+impl<M: Routable + Clone + From<Bytes> + Into<Bytes>> Broker<M> {
+    pub fn register(&self, topic_id: M::SubjectId) -> (WrappedSender<M>, WrappedReceiver<M>) {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
         let mut topics= self.topics.lock().unwrap();
         // TODO: ^this should not panic, come back to this when I understand errors well enough
@@ -270,9 +259,12 @@ impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
         // create a new receiver
         // we pass &self.topics into clone because clone does not consume the original pointer
         let wrx = WrappedReceiver { 
-            topic_id: topic_id, receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
+            topic_id: topic_id.clone(), receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
         };
-        (tx, wrx)
+        let wtx = WrappedSender {
+            broadcast_sender: tx, nats_client: self.nats_client.clone(),
+        };
+        (wtx, wrx)
     }
     /*
     // this sender will be valid until the corresponding receiver is dropped
@@ -284,6 +276,8 @@ impl<TopicId: Key, M: Routable + Clone> Broker<TopicId, M> {
     }
     */
 }
+
+// TODO: make a list of all other things that need to be cleaned up
 
 pub fn get_id() -> usize {
     // using the static keyword is like declaring a piece of memory with the lifetime of 

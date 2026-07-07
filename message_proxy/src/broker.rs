@@ -40,6 +40,10 @@ pub trait Routable {
     fn sender_id(&self) -> Self::SenderId;
 }
 
+pub trait ToBytes {
+    fn to_bytes(&self) -> Bytes;
+}
+
 
 /*
 - what is actually happening here
@@ -119,7 +123,7 @@ impl BrokerBuilder<Missing> {
 }
 
 impl BrokerBuilder<Present> {
-    pub fn build<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>>(
+    pub fn build<M: Routable + TryFrom<Bytes> + ToBytes>(
         self,
     ) -> Broker<M> {
         Broker{
@@ -132,7 +136,7 @@ impl BrokerBuilder<Present> {
     }
 }
 
-pub struct WrappedSender<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> {
+pub struct WrappedSender<M: Routable + TryFrom<Bytes> + ToBytes> {
     broadcast_sender: Sender<Arc<M>>,
     nats_client: Client,
 }
@@ -156,7 +160,7 @@ pub enum WrappedNatsClientError {
 //     }
 // }
 
-impl <M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> WrappedSender<M> {
+impl <M: Routable + TryFrom<Bytes> + ToBytes> WrappedSender<M> {
     /// Attempts to send the value on the broadcast channel
     /// Secondly, attempts to publish the message to the nats channel via the nats client
     /// An error type return with the try send error means the broadcast send
@@ -169,25 +173,22 @@ impl <M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> WrappedSender<M> {
         // ^decided to go with creating two different result types and letting the calling code differentiate
         // between them. In this case the short circuit / mutual exclusion between the result types is
         // implicit instead of explicit
-
+        let (subject_id, payload) = (value.subject_id(), value.to_bytes());
         // send the value to the broadcast channel, surface any errors that 
         // are encountered here so that they may be recorded by the calling code
-
-        // TODO: I bet I can make it so we don't need the clone trait bound on M. However, my
-        // understanding of the into trait is that it strictly takes ownership of the input
-        // instead of taking a reference to the input 
-        let result_broadcast = self.broadcast_sender.send(Arc::new(value.clone()));
+        let result_broadcast = self.broadcast_sender.send(Arc::new(value));
         // send the value to the nats client
         // surface errors corresponding to failure to send so they may be recorded at the calling code
         // publish is cancellation safe
         let result_nats_client = match self.nats_client
-            .publish(format!("operations.{}", value.subject_id()), value.into())
+            .publish(format!("operations.{}", subject_id), payload)
             .now_or_never() {
                 Some(publish_result) => {
                     publish_result.map_err(WrappedNatsClientError::NatsClientFailure)
                 },
                 None => Err(WrappedNatsClientError::NatsClientSkipped),
             };
+
         (result_broadcast, result_nats_client)
     }
 }
@@ -232,7 +233,7 @@ impl<M: Routable> WrappedReceiver<M> {
 }
 
 #[derive(Clone)]
-pub struct Broker<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> {
+pub struct Broker<M: Routable + TryFrom<Bytes> + ToBytes> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
     topics: Arc<Mutex<HashMap<M::SubjectId, Sender<Arc<M>>>>>,
     // nats client implements clone by itself, no need to wrap it in an arc
@@ -240,7 +241,7 @@ pub struct Broker<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> {
     buffer_size: usize,
 }
 
-impl<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> Broker<M> {
+impl<M: Routable + TryFrom<Bytes> + ToBytes> Broker<M> {
     pub fn register(&self, topic_id: M::SubjectId) -> (WrappedSender<M>, WrappedReceiver<M>) {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
         let mut topics= self.topics.lock().unwrap();

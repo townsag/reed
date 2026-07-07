@@ -2,25 +2,21 @@
 - many clients should be able to edit the same document simultaneously, even if there are more clients than can connect to one instance of the message proxy service
 
 ## Technical Requirements:
-- [ ] add nats core to the message proxy subsystem docker compose file
-- [ ] create a nats core client on the chat task
+- [x] add nats core to the message proxy subsystem docker compose file
+- [x] create a nats core client on the message proxy service instance
 - [ ] send updates to nats core:
-    - [ ] create a globally scoped async tokio task that reads from a mpsc channel and writes to nats core
-        - this task should have ownership of the nats client
-        - [ ] update the BrokerMessage struct and routable trait to differentiate between the topic_id and the client_id
-            - this is so we can tell which subject to publish a messages on when it gets to the nats client 
-        - since the broker will need a copy of the nats client to create subscribers, the broker can take a copy of the nats client in its builder and create this task at the broker instead of the nats client and the task being globally scoped
-        - [ ] store the join handle for the task that reads from the channel and sends to nats core inside the broker so it can be stopped when the broker is dropped
-    - [ ] add the sender for this nats core channel to the sender that reader tasks would use to broadcast messages to other clients
-        - This is very similar to the internal implementation of the nats client. Implementing sending to the nats client this way is like wrapping a mpsc queue with another mpsc queue, it wastes memory and introduces unnecessary complexity and latency
-        - However the nats client does not have a try_send option, sends to the nats client are blocking when the mpsc queue that the nats client uses to buffer messages is full
-        - we want to have fire and forget / at most once delivery of messages when writing to NATs and we don't want a slow nats client to block a fast websocket sender
-        - for this reason we use the wrapped sender strategy
-        - if in the future there is a try_send method added to the nats client, we can replace the mpsc channel inside of the wrapped sender with a nats client
-    - [ ] call the sender inside the read task when processing client sync step two messages or update messages
+    - [x] update the BrokerMessage struct and routable trait to differentiate between the topic_id and the client_id
+        - this is so we can tell which subject to publish a messages on when it gets to the nats client 
+    - [x] add the nats async client to the broker struct so that it may be added to the wrapped senders
+        - [x] update the broker builder to take the nats client
+    - [ ] add the nats client to the wrapped sender
+        - use the Futures crate now_or_never() function to only write to the nats client if the nats client is ready to accept the write without blocking
+        - [ ] record that the message was dropped when writing to the nats client and why it was dropped
     - [ ] record metrics
-        - [ ] when do we drop messages that are sent to the nats client mpsc channel 
+        - [ ] when do we drop messages that are sent to the nats client mpsc channel
+            - [ ] why they are dropped
         - [ ] what is the average length of the nats client mpsc channel
+            - this is not available information
         - [ ] todo
 - [ ] receive updates from nats core:
     - [ ] update the broker to have a second sender type that we use to receive messages from nats core
@@ -39,3 +35,5 @@
         - [ ] when the last wrapped receiver is dropped and we need to clean up the resources for that topic:
             - use the join handle for that topics async task to stop the async task
             - it is not necessary to flush the remaining messages, etc. because we are cleaning up the last receiver. Any sent messages would have nobody to read them
+        - [ ] drop messages that originated from this instance?
+

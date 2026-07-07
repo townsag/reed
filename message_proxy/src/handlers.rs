@@ -21,7 +21,7 @@ use futures_util::{
 use yrs::{
     sync::protocol::SyncMessage,
 };
-use crate::broker::Routable;
+use crate::{v1::operations::Operation};
 use crate::repository::{Repository, RepoError};
 use crate::AppState;
 use crate::config::otel::{
@@ -38,20 +38,6 @@ enum ReaderEvent {
     ClientSyncStep1(Vec<u8>, Instant),
 }
 
-#[derive(Clone,Debug)]
-pub struct UpdateMessage {
-    client_id: u64,
-    offset: Option<u32>,
-    payload: Arc<Vec<u8>>,
-    has_deletion: bool,
-}
-
-impl Routable for UpdateMessage {
-    type Key = u64;
-    fn key(&self) -> &Self::Key {
-        return &self.client_id;
-    }
-}
 
 #[derive(serde::Deserialize)]
 pub struct ClientParams {
@@ -110,7 +96,7 @@ enum TaskError {
     #[error("failed to send a message from the reader to the writer")]
     ReaderToWriterSendError(ReaderEvent),
     #[error("failed to send an update message from the reader to the broker")]
-    ReaderToBroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<UpdateMessage>),
+    ReaderToBroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<Arc<Operation>>),
 }
 
 // TODO: parse the user id from a query parameter with a jwt in it

@@ -14,10 +14,9 @@ use axum::{
     Router,
     routing::{any,get},
 };
-use uuid::Uuid;
 use crate::{
     broker::{Broker, BrokerBuilder}, 
-    handlers::{handler, UpdateMessage}, 
+    handlers::{handler}, 
     repository::{Repository, postgres::PgRepo},
     config::{
       postgres,
@@ -33,11 +32,74 @@ use tracing::{
 //     filter::LevelFilter,
 // };
 
+pub mod v1 {
+    pub mod operations {
+        /* 
+        you can use this approach to view the generated code
+        - select include!
+        - command + p
+        - > rust-analyzer: Expand macro recursively at caret
+        */
+        include!(concat!(env!("OUT_DIR"), "/v1.operations.rs"));
+
+        use prost::{DecodeError, Message};
+        use uuid::Uuid;
+        use bytes::Bytes;
+        use std::io::Cursor;
+        use crate::broker::{Routable, ToBytes};
+
+        impl Routable for Operation {
+            type SenderId = u64;
+            type SubjectId = Uuid;
+            
+            fn sender_id(&self) -> Self::SenderId { self.client_id }
+            fn subject_id(&self) -> Self::SubjectId {
+                Uuid::from_u64_pair(self.document_id_high, self.document_id_low)
+            }
+        }
+        impl TryFrom<Bytes> for Operation {
+            type Error = DecodeError;
+            fn try_from(value: Bytes) -> Result<Self, Self::Error> {
+                // TODO: figure out what this does explicitly
+                Operation::decode(&mut Cursor::new(value))
+            }
+        }
+        impl ToBytes for Operation {
+            fn to_bytes(&self) -> Bytes {
+                let mut buf = Vec::new();
+                buf.reserve(self.encoded_len());
+                self.encode(&mut buf).unwrap();
+                buf.into()
+            }
+        }
+        impl Operation {
+            pub fn new(
+                document_id: Uuid,
+                client_id: u64,
+                offset: Option<u32>,
+                payload: Vec<u8>,
+                has_deletion: bool,
+            ) -> Self {
+                let (document_id_high, document_id_low) = document_id.as_u64_pair();
+                Operation { 
+                    document_id_high, document_id_low, 
+                    client_id, offset, payload, has_deletion
+                }
+            }
+        }
+    }
+}
+
+use v1::operations::Operation;
+
+/*
+I am very interested in moving closer to the infrastructure level in my work. I look forward to the opportunity to work on more infrastructure level problems at Crusoe.
+*/
 
 
 #[derive(Clone)]
 struct AppState<R: Repository> {
-    broker: Broker<Uuid, UpdateMessage>,
+    broker: Broker<Operation>,
     // TODO: learn more about the difference between dynamic dispatch and static dispatch
     // for now it seemed prudent to use static dispatch here because we are always going to know the
     // repository type at compile time and we are not going to use multiple repository types 
@@ -69,7 +131,7 @@ pub async fn run() {
             return;
         }
     };
-    let broker: Broker<Uuid, UpdateMessage> = BrokerBuilder::default()
+    let broker: Broker<Operation> = BrokerBuilder::default()
         .nats_client(nats_client)
         .build();
     // when creating a router the state type parameter indicates the type of the state

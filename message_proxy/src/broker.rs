@@ -119,12 +119,12 @@ impl BrokerBuilder<Missing> {
 }
 
 impl BrokerBuilder<Present> {
-    pub fn build<M: Routable + Clone + From<Bytes> + Into<Bytes>>(
+    pub fn build<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>>(
         self,
     ) -> Broker<M> {
         Broker{
             topics: Arc::new(Mutex::new(
-                HashMap::<M::SubjectId, Sender<M>>::new()
+                HashMap::<M::SubjectId, Sender<Arc<M>>>::new()
             )),
             nats_client: self.nats_client,
             buffer_size: self.buffer_size,
@@ -132,8 +132,8 @@ impl BrokerBuilder<Present> {
     }
 }
 
-pub struct WrappedSender<M: Routable + Clone + From<Bytes> + Into<Bytes>> {
-    broadcast_sender: Sender<M>,
+pub struct WrappedSender<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> {
+    broadcast_sender: Sender<Arc<M>>,
     nats_client: Client,
 }
 
@@ -156,7 +156,7 @@ pub enum WrappedNatsClientError {
 //     }
 // }
 
-impl <M: Routable + Clone + From<Bytes> + Into<Bytes>> WrappedSender<M> {
+impl <M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> WrappedSender<M> {
     /// Attempts to send the value on the broadcast channel
     /// Secondly, attempts to publish the message to the nats channel via the nats client
     /// An error type return with the try send error means the broadcast send
@@ -165,14 +165,18 @@ impl <M: Routable + Clone + From<Bytes> + Into<Bytes>> WrappedSender<M> {
     /// Sending a message to the broadcast channel is non blocking.
     /// If the nats client buffer is full, we instead skip sending the message to 
     /// nats core instead of blocking.
-    async fn send(&self, value: M) -> (Result<usize, SendError<M>>, Result<(), WrappedNatsClientError>) {
+    pub async fn send(&self, value: M) -> (Result<usize, SendError<Arc<M>>>, Result<(), WrappedNatsClientError>) {
         // ^decided to go with creating two different result types and letting the calling code differentiate
         // between them. In this case the short circuit / mutual exclusion between the result types is
         // implicit instead of explicit
 
         // send the value to the broadcast channel, surface any errors that 
         // are encountered here so that they may be recorded by the calling code
-        let result_broadcast = self.broadcast_sender.send(value.clone());
+
+        // TODO: I bet I can make it so we don't need the clone trait bound on M. However, my
+        // understanding of the into trait is that it strictly takes ownership of the input
+        // instead of taking a reference to the input 
+        let result_broadcast = self.broadcast_sender.send(Arc::new(value.clone()));
         // send the value to the nats client
         // surface errors corresponding to failure to send so they may be recorded at the calling code
         // publish is cancellation safe
@@ -189,14 +193,14 @@ impl <M: Routable + Clone + From<Bytes> + Into<Bytes>> WrappedSender<M> {
 }
 
 
-pub struct WrappedReceiver<M: Routable + Clone> {
+pub struct WrappedReceiver<M: Routable> {
     topic_id: M::SubjectId,
     // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
-    receiver: Receiver<M>,
-    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<M>>>>,
+    receiver: Receiver<Arc<M>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<Arc<M>>>>>,
 }
 
-impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
+impl<M: Routable> Drop for WrappedReceiver<M> {
     fn drop(&mut self) {
         // upon this receiver going out of scope, we need to check if there are any remaining
         // receivers open for this topic (other than this receiver) and delete the topic from
@@ -215,28 +219,28 @@ impl<M: Routable + Clone> Drop for WrappedReceiver<M> {
     }
 }
 
-impl<M: Routable + Clone> WrappedReceiver<M> {
+impl<M: Routable> WrappedReceiver<M> {
     // implementing the recv function on the wrapped receiver and making the underlying receiver
     // private means that clients can receive from the broadcast channel without being able to
     // clone the broadcast channel. This is important because we cleanup the topic from the topic
     // hashmap while the last broadcast channel receiver is being dropped but we only put the 
     // cleanup logic in the drop function of the receiver wrapper, not in the drop function of 
     // the receiver itself 
-    pub async fn recv(&mut self) -> Result<M, RecvError> {
+    pub async fn recv(&mut self) -> Result<Arc<M>, RecvError> {
         return self.receiver.recv().await;
     }
 }
 
 #[derive(Clone)]
-pub struct Broker<M: Routable + Clone + From<Bytes> + Into<Bytes>> {
+pub struct Broker<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<M>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<Arc<M>>>>>,
     // nats client implements clone by itself, no need to wrap it in an arc
     nats_client: Client,
     buffer_size: usize,
 }
 
-impl<M: Routable + Clone + From<Bytes> + Into<Bytes>> Broker<M> {
+impl<M: Routable + Clone + TryFrom<Bytes> + Into<Bytes>> Broker<M> {
     pub fn register(&self, topic_id: M::SubjectId) -> (WrappedSender<M>, WrappedReceiver<M>) {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
         let mut topics= self.topics.lock().unwrap();

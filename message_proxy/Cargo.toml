@@ -10,6 +10,7 @@ axum = { version = "0.8.8", features = ["macros", "ws"] }
 bytes = "1.12.0"
 clap = { version = "4.6.1", features = ["derive"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
+futures = "0.3.32"
 futures-channel = "0.3.32"
 futures-util = "0.3.32"
 opentelemetry = { version = "0.32", features = ["metrics"] }
@@ -17,6 +18,7 @@ opentelemetry-appender-tracing = "0.32"
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry-stdout = "0.32"
 opentelemetry_sdk = { version = "0.32", features = ["experimental_metrics_bound_instruments"] }
+prost = "0.14.4"
 rand = "0.10.1"
 rand_distr = "0.6.0"
 ratatui = "0.29.0"
@@ -34,3 +36,6 @@ trait-variant = "0.1.2"
 tui-textarea = { version = "0.7.0", features = ["ratatui", "crossterm"] }
 uuid = { version = "1.22.0", features = ["serde", "v4"] }
 yrs = "0.25.0"
+
+[build-dependencies]
+prost-build = "0.14.4"

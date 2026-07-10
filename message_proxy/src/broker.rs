@@ -3,18 +3,26 @@ use bytes::Bytes;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::broadcast::{
     self, Receiver, Sender, error::RecvError, error::SendError,
+};
+use tokio::task::{
+    JoinHandle,
 };
 // use the std implementation of Mutex because we don't have to hold the lock across await points
 use std::sync::{Mutex, Arc};
 use std::hash::Hash;
-use std::collections::HashMap;
+use std::collections::{
+    hash_map::Entry::{Occupied, Vacant},
+    HashMap,
+};
 use async_nats::{
     Client,
     PublishError,
+    Subscriber,
 };
+use tracing::{event, Level};
 
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
@@ -30,8 +38,8 @@ use async_nats::{
 // const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 100;
 const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 20_000;
 
-pub trait ID: Eq + Hash + Clone + Display {}
-impl <T: Eq + Hash + Clone + Display> ID for T {}
+pub trait ID: Eq + Hash + Clone + Display + Send + 'static {}
+impl <T: Eq + Hash + Clone + Display + Send + 'static> ID for T {}
 
 pub trait Routable {
     type SubjectId: ID;
@@ -96,7 +104,7 @@ pub struct BrokerBuilder <N: HasNatsClient> {
 }
 
 impl Default for BrokerBuilder<Missing> {
-fn default() -> Self {
+    fn default() -> Self {
         BrokerBuilder { buffer_size: BROADCAST_CHANNEL_BUFFER_SIZE, nats_client: (), state: PhantomData }
     }
 }
@@ -122,13 +130,16 @@ impl BrokerBuilder<Missing> {
     }
 }
 
+pub trait Message: Routable + TryFrom<Bytes, Error: std::fmt::Display> + ToBytes + Send + Sync + 'static {}
+impl <T: Routable + TryFrom<Bytes, Error: std::fmt::Display> + ToBytes + Send + Sync + 'static> Message for T {}
+
 impl BrokerBuilder<Present> {
-    pub fn build<M: Routable + TryFrom<Bytes> + ToBytes>(
+    pub fn build<M: Message>(
         self,
     ) -> Broker<M> {
         Broker{
             topics: Arc::new(Mutex::new(
-                HashMap::<M::SubjectId, Sender<Arc<M>>>::new()
+                HashMap::<M::SubjectId, TopicScopedState<M>>::new()
             )),
             nats_client: self.nats_client,
             buffer_size: self.buffer_size,
@@ -136,7 +147,7 @@ impl BrokerBuilder<Present> {
     }
 }
 
-pub struct WrappedSender<M: Routable + TryFrom<Bytes> + ToBytes> {
+pub struct WrappedSender<M: Message> {
     broadcast_sender: Sender<Arc<M>>,
     nats_client: Client,
 }
@@ -160,7 +171,7 @@ pub enum WrappedNatsClientError {
 //     }
 // }
 
-impl <M: Routable + TryFrom<Bytes> + ToBytes> WrappedSender<M> {
+impl <M: Message> WrappedSender<M> {
     /// Attempts to send the value on the broadcast channel
     /// Secondly, attempts to publish the message to the nats channel via the nats client
     /// An error type return with the try send error means the broadcast send
@@ -194,14 +205,14 @@ impl <M: Routable + TryFrom<Bytes> + ToBytes> WrappedSender<M> {
 }
 
 
-pub struct WrappedReceiver<M: Routable> {
+pub struct WrappedReceiver<M: Message> {
     topic_id: M::SubjectId,
     // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
     receiver: Receiver<Arc<M>>,
-    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<Arc<M>>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
 }
 
-impl<M: Routable> Drop for WrappedReceiver<M> {
+impl<M: Message> Drop for WrappedReceiver<M> {
     fn drop(&mut self) {
         // upon this receiver going out of scope, we need to check if there are any remaining
         // receivers open for this topic (other than this receiver) and delete the topic from
@@ -213,14 +224,14 @@ impl<M: Routable> Drop for WrappedReceiver<M> {
             // if there are no other receivers for this topic, we should expect the receiver 
             // count to be 1 or 0. Remove the entry from the hashmap if there are no other
             // receivers
-            if let Some(tx) = topics.get(&self.topic_id) && tx.receiver_count() <= 1 {
+            if let Some(state) = topics.get(&self.topic_id) && state.broadcast_sender.receiver_count() <= 1 {
                 topics.remove(&self.topic_id);
             }
         }
     }
 }
 
-impl<M: Routable> WrappedReceiver<M> {
+impl<M: Message> WrappedReceiver<M> {
     // implementing the recv function on the wrapped receiver and making the underlying receiver
     // private means that clients can receive from the broadcast channel without being able to
     // clone the broadcast channel. This is important because we cleanup the topic from the topic
@@ -232,17 +243,77 @@ impl<M: Routable> WrappedReceiver<M> {
     }
 }
 
+struct TopicScopedState<M: Message> {
+    broadcast_sender: Sender<Arc<M>>,
+    nats_core_subscriber_task: JoinHandle<()>,
+}
+
+impl <M: Message> Drop for TopicScopedState<M> {
+    fn drop(&mut self) {
+        self.nats_core_subscriber_task.abort();
+    }
+}
+
+// - The send trait bound here indicates that ownership of the message value can be transferred
+//   between threads
+//      - requires either synchronization or lifetimes
+// - the sync trait indicates that multiple threads can access the value at the same time
+//      - requires synchronization
+// - the static lifetime indicates that the message isn't made up of borrowed references
+//   to data that may be owned elsewhere and dropped
+impl <M: Message> TopicScopedState<M> {
+    fn new(topic_id: M::SubjectId, buffer_size: usize, mut sub: Subscriber) -> Self {
+        // create the broadcast channel
+        let tx: Sender<Arc<M>> = broadcast::channel(buffer_size).0;
+        let broadcast_sender = tx.clone();
+        // create the async task that polls the nats core subscriber and published messages
+        // messages to the broadcast channel
+        let middleware_handle = tokio::spawn(async move {
+            loop {
+                // read from the subscriber
+                match sub.next().await {
+                    Some(msg) => {
+                        // write to the sender
+                        let parsed = M::try_from(msg.payload);
+                        match parsed {
+                            Ok(value) => {
+                                if let Err(_) = tx.send(Arc::new(value)) {
+                                    event!(Level::WARN, topic_id=%topic_id, "failed to write message to broadcast sender");
+                                    return
+                                }
+                            },
+                            Err(e) => {
+                                event!(
+                                    Level::WARN, %topic_id, error=%e,
+                                    "failed to deserialize message received from nats core subscriber",
+                                );
+                                continue
+                            }
+                        }
+                    },
+                    None => return
+                }
+            }
+        });
+        // return self
+        TopicScopedState { broadcast_sender: broadcast_sender, nats_core_subscriber_task: middleware_handle }
+    }
+    fn clone_sender(&self) -> Sender<Arc<M>> {
+        self.broadcast_sender.clone()
+    }
+}
+
 #[derive(Clone)]
-pub struct Broker<M: Routable + TryFrom<Bytes> + ToBytes> {
+pub struct Broker<M: Message> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<M::SubjectId, Sender<Arc<M>>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
     // nats client implements clone by itself, no need to wrap it in an arc
     nats_client: Client,
     buffer_size: usize,
 }
 
-impl<M: Routable + TryFrom<Bytes> + ToBytes> Broker<M> {
-    pub fn register(&self, topic_id: M::SubjectId) -> (WrappedSender<M>, WrappedReceiver<M>) {
+impl<M: Message> Broker<M> {
+    pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
         // check the topics hashmap to see if there is already a broadcast channel for that topic_id
         let mut topics= self.topics.lock().unwrap();
         // TODO: ^this should not panic, come back to this when I understand errors well enough
@@ -251,35 +322,26 @@ impl<M: Routable + TryFrom<Bytes> + ToBytes> Broker<M> {
         // The topics list stores senders, we want to access the sender for the topic
         // id for which we are registering a connection. If the sender does not exist, then
         // we create a new sender. Either way we copy the sender from the hashmap
-        let tx = topics
-            // entry takes ownership because there is a chance that we will have to insert this key into
-            // the map
-            .entry(topic_id.clone())
-            .or_insert_with(|| broadcast::channel(self.buffer_size).0)
-            // you want to call .clone on channel senders to create copies of them, this is different
-            // from using Arc::clone() for making new reference counted pointers. In that case we use
-            // the Arc::clone() function syntax to indicate that there is no copying going on. In this
-            // case we indicate that there is a copy going on with the .clone() function
-            .clone();
+        let tx = match topics.entry(topic_id.clone()) { 
+            Occupied(entry) => entry.get().broadcast_sender.clone(),
+            Vacant(entry) => {
+                let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
+                let state = TopicScopedState::new(topic_id.clone(), self.buffer_size, sub);
+                entry.insert(state).clone_sender()
+            },
+        };
+
         // create a new receiver
         // we pass &self.topics into clone because clone does not consume the original pointer
-        let wrx = WrappedReceiver { 
-            topic_id: topic_id.clone(), receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
+        let wrx: WrappedReceiver<M> = WrappedReceiver { 
+            topic_id: topic_id, receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
         };
         let wtx = WrappedSender {
             broadcast_sender: tx, nats_client: self.nats_client.clone(),
         };
-        (wtx, wrx)
+        
+        Ok((wtx, wrx))
     }
-    /*
-    // this sender will be valid until the corresponding receiver is dropped
-    // the corresponding receiver is dropped when there are no more clients connected to
-    // this topic_id
-    pub fn get_sender(&self, topic_id: TopicId) -> Option<Sender<M>> {
-        let topics = self.topics.lock().unwrap();
-        topics.get(&topic_id).map(|tx| tx.clone())
-    }
-    */
 }
 
 // TODO: make a list of all other things that need to be cleaned up

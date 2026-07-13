@@ -5,13 +5,22 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::broadcast::{
-    self, Receiver, Sender, error::RecvError, error::SendError,
+    self, 
+    Receiver as BroadcastReceiver, 
+    Sender as BroadcastSender, 
+    error::RecvError, error::SendError,
+};
+use tokio::sync::mpsc::{
+    self, Receiver, Sender, UnboundedReceiver, UnboundedSender,
+};
+use tokio::sync::oneshot::{
+    self, Sender as ResponseSender,
 };
 use tokio::task::{
     JoinHandle,
 };
 // use the std implementation of Mutex because we don't have to hold the lock across await points
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc};
 use std::hash::Hash;
 use std::collections::{
     hash_map::Entry::{Occupied, Vacant},
@@ -37,6 +46,10 @@ use tracing::{event, Level};
 
 // const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 100;
 const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 20_000;
+// TODO: do some math about the timeout / upper bound on the creation of the 
+// nats subscriber and the number of new clients per second this channel will
+// be able to accommodate
+const TOPIC_STATE_CHANNEL_BUFFER_SIZE: usize = 10;
 
 pub trait ID: Eq + Hash + Clone + Display + Send + 'static {}
 impl <T: Eq + Hash + Clone + Display + Send + 'static> ID for T {}
@@ -138,17 +151,13 @@ impl BrokerBuilder<Present> {
         self,
     ) -> Broker<M> {
         Broker{
-            topics: Arc::new(Mutex::new(
-                HashMap::<M::SubjectId, TopicScopedState<M>>::new()
-            )),
-            nats_client: self.nats_client,
-            buffer_size: self.buffer_size,
+            topic_state_actor_handler: TopicsStateActorHandle::new(self.nats_client, self.buffer_size),
         }
     }
 }
 
 pub struct WrappedSender<M: Message> {
-    broadcast_sender: Sender<Arc<M>>,
+    broadcast_sender: BroadcastSender<Arc<M>>,
     nats_client: Client,
 }
 
@@ -208,26 +217,18 @@ impl <M: Message> WrappedSender<M> {
 pub struct WrappedReceiver<M: Message> {
     topic_id: M::SubjectId,
     // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
-    receiver: Receiver<Arc<M>>,
-    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
+    receiver: BroadcastReceiver<Arc<M>>,
+    deregister_sender: UnboundedSender<DeregisterRequest<M>>,
 }
 
 impl<M: Message> Drop for WrappedReceiver<M> {
     fn drop(&mut self) {
-        // upon this receiver going out of scope, we need to check if there are any remaining
-        // receivers open for this topic (other than this receiver) and delete the topic from
-        // the mapping if there are any other receivers
-
-        // if the call to lock the mutex fails, that means that another thread has panicked 
-        // while holding the mutex. In that case we can return
-        if let Ok(mut topics) = self.topics.lock() {
-            // if there are no other receivers for this topic, we should expect the receiver 
-            // count to be 1 or 0. Remove the entry from the hashmap if there are no other
-            // receivers
-            if let Some(state) = topics.get(&self.topic_id) && state.broadcast_sender.receiver_count() <= 1 {
-                topics.remove(&self.topic_id);
-            }
-        }
+        // upon this receiver going out of scope, we need to indicate to the actor that manages subject
+        // scoped state that one of the 
+        // TODO: remember that the drop function executes before the data inside of the struct is dropped
+        // that means that the receiver wrapped by the struct may still be alive when the actor receives 
+        // the deregister message. The actor should account for this
+        self.deregister_sender.send(DeregisterRequest { topic_id: self.topic_id.clone() });
     }
 }
 
@@ -244,8 +245,9 @@ impl<M: Message> WrappedReceiver<M> {
 }
 
 struct TopicScopedState<M: Message> {
-    broadcast_sender: Sender<Arc<M>>,
+    broadcast_sender: BroadcastSender<Arc<M>>,
     nats_core_subscriber_task: JoinHandle<()>,
+    count_registered: usize,
 }
 
 impl <M: Message> Drop for TopicScopedState<M> {
@@ -262,9 +264,9 @@ impl <M: Message> Drop for TopicScopedState<M> {
 // - the static lifetime indicates that the message isn't made up of borrowed references
 //   to data that may be owned elsewhere and dropped
 impl <M: Message> TopicScopedState<M> {
-    fn new(topic_id: M::SubjectId, buffer_size: usize, mut sub: Subscriber) -> Self {
+    fn new(topic_id: M::SubjectId, broadcast_buffer_size: usize, mut sub: Subscriber) -> Self {
         // create the broadcast channel
-        let tx: Sender<Arc<M>> = broadcast::channel(buffer_size).0;
+        let tx: BroadcastSender<Arc<M>> = broadcast::channel(broadcast_buffer_size).0;
         let broadcast_sender = tx.clone();
         // create the async task that polls the nats core subscriber and published messages
         // messages to the broadcast channel
@@ -296,51 +298,204 @@ impl <M: Message> TopicScopedState<M> {
             }
         });
         // return self
-        TopicScopedState { broadcast_sender: broadcast_sender, nats_core_subscriber_task: middleware_handle }
+        TopicScopedState { 
+            broadcast_sender: broadcast_sender, 
+            nats_core_subscriber_task: middleware_handle, 
+            count_registered: 0
+        }
     }
-    fn clone_sender(&self) -> Sender<Arc<M>> {
+    // if we tie creating a broadcast sender to the act of incrementing the count of registered
+    // tasks then we can prevent broadcast senders from being created without registering
+    fn register(&mut self) -> BroadcastSender<Arc<M>> {
+        self.count_registered += 1;
         self.broadcast_sender.clone()
+    }
+    fn decrement_registered(&mut self) {
+        self.count_registered -= 1;
+    }
+}
+
+// enum TopicsStateActorMessage <M: Message> {
+//     Register(M::SubjectId, ResponseSender<(WrappedSender<M>, WrappedReceiver<M>)>),
+//     Deregister(M::SubjectId),
+// }
+struct RegisterRequest <M: Message> {
+    topic_id: M::SubjectId,
+    response_channel: ResponseSender<Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error>>,
+}
+struct DeregisterRequest <M: Message> {
+    topic_id: M::SubjectId,
+}
+
+struct TopicsStateActor <M: Message> {
+    register_receiver: Receiver<RegisterRequest<M>>,
+    deregister_sender: UnboundedSender<DeregisterRequest<M>>,
+    deregister_receiver: UnboundedReceiver<DeregisterRequest<M>>,
+
+    topics: HashMap<M::SubjectId, TopicScopedState<M>>,
+    // nats client implements clone by itself, no need to wrap it in an arc
+    nats_client: Client,
+    broadcast_buffer_size: usize,
+}
+
+impl <M: Message> TopicsStateActor <M> {
+    // TODO: why would this function need to take mut& self?
+    async fn run(mut self) {
+        let mut register_enabled= true;
+        loop {
+            let deregister_enabled = self.deregister_sender.strong_count() > 1 && !self.deregister_sender.is_closed();
+            tokio::select! {
+                req = self.register_receiver.recv(), if register_enabled => match req {
+                    Some(reg) => { self.handle_register(reg.topic_id, reg.response_channel).await; },
+                    None => { 
+                        // this case corresponds to the last instance of the handler being dropped 
+                        // if the last instance of the handler is dropped that means that there are 
+                        // no longer any more tasks that can call the register() method on the handler
+                        register_enabled = false;
+                    }
+                },
+                /*
+                - Decided to go with the approach of having a strong unbounded sender inside of the 
+                  topics state actor
+                    - this allows the deregister sender to be copied into the wrapped receiver inside
+                      of the handler register function. This prevents a bug where the broadcast receiver
+                      is dropped before it is added to the dropped receiver, resulting in potential 
+                      skipped cleanup of the broadcast channel
+                    - if the deregister sender was a weak sender instead of a strong sender then the
+                      deregister channel could be prematurely closed if it was polled but there were
+                      no senders
+                This feels mildly overcomplicated. If there is another way to do this that is easier
+                then we should do it that way 
+                 */
+                req = self.deregister_receiver.recv(), if deregister_enabled => match req {
+                    Some(dereg) => { self.handle_deregister(dereg.topic_id); },
+                    None => { /* we will detect that the channel is closed at top of loop */ }
+                }, 
+                /*
+                If the register channel has been closed because there are no more copies of the handler
+                and the copy of the deregister sender held by the topics state actor is the only
+                remaining copy of the topics state actor, then we need to stop the topics state
+                actor run function. This results in cleanup on the topic state actors owned values,
+                including the topic scoped state.
+                 */
+                else => return
+            }
+        }
+    }
+    async fn handle_register(
+        &mut self, 
+        topic_id: M::SubjectId, 
+        os_channel: ResponseSender<Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error>>,
+    ) {
+        // if there is no entry for this topic_id in the topics hashmap, add one
+        // the entry holds a copy of the broadcast sender and the handle to the
+        // tokio task which reads from the nats subscriber and writes to the 
+        // broadcast sender
+        let tx = match self.topics.entry(topic_id.clone()) {
+            Occupied(entry) => {
+                let mut state = entry.get();
+                state.register()
+            },
+            Vacant(entry) => {
+                // send the error as a response over the oneshot channel
+                let sub = match self.nats_client.subscribe(format!("operations.{}", topic_id)).await {
+                    Ok(sub) => sub,
+                    Err(e) => {
+                        // TODO: send the error over the oneshot channel
+                        os_channel.send(Err(e));
+                        return
+                    }
+                };
+                let topic_state = TopicScopedState::new(topic_id, self.broadcast_buffer_size, sub);
+                entry.insert(topic_state).register()
+            },
+        };
+        /*
+        It is imperative that we create the wrapped receiver here instead of in the calling code because
+        we want to avoid the potential situation in which the broadcast receiver is dropped before it 
+        is wrapped in the wrapped receiver. This could lead to leaked topic scoped state / memory.
+         */
+        let wrx = WrappedReceiver {
+            topic_id: topic_id, receiver: tx.subscribe(), deregister_sender: self.deregister_sender.clone(),
+        };
+        let wtx = WrappedSender {
+            broadcast_sender: tx, nats_client: self.nats_client.clone(),
+        };
+        // send the sender and receiver over the oneshot response channel. We are not concerned with the
+        // result. Either it succeeds or it fails and the relevant housekeeping happens in the wrapped
+        // receivers drop function.
+        let _ = os_channel.send(Ok((wtx, wrx)));
+    }
+    fn handle_deregister(&mut self, topic_id: M::SubjectId) {
+        // if there is an entry for this topic_id 
+        // check the receiver count for the broadcast sender in the topic scoped state
+        // if the receiver count is 0, drop the topic scoped state by removing
+        // that entry from the hashmap
+        /*
+        Using the broadcast sender receiver count can result in a race condition between the 
+        drop function of the wrapped receiver and the handle deregister function. That is why
+        we explicitly count the number of registered tasks inside the topic scoped state
+        instead of relying on the count of the broadcast sender
+         */
+        if let Occupied(mut e) = self.topics.entry(topic_id) {
+            let state = e.get_mut();
+            if state.count_registered == 1 {
+                e.remove();
+            } else {
+                state.decrement_registered();
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TopicsStateActorHandle <M: Message> {
+    register_sender: Sender<RegisterRequest<M>>,
+    deregister_sender: UnboundedSender<DeregisterRequest<M>>,
+}
+
+impl <M: Message> TopicsStateActorHandle<M> {
+    fn new(nats_client: Client, broadcast_buffer_size: usize) -> Self {
+        let (register_tx, register_rx) = mpsc::channel(TOPIC_STATE_CHANNEL_BUFFER_SIZE);
+        let (deregister_tx, deregister_rx) = mpsc::unbounded_channel();
+        let actor = TopicsStateActor {
+            register_receiver: register_rx,
+            deregister_sender: deregister_tx.clone(),
+            deregister_receiver: deregister_rx,
+            topics: HashMap::new(),
+            nats_client,
+            broadcast_buffer_size: broadcast_buffer_size,
+        };
+        tokio::spawn(async move {
+            actor.run().await;
+        });
+        TopicsStateActorHandle { register_sender: register_tx, deregister_sender: deregister_tx }
+    }
+    async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.register_sender.send(RegisterRequest { topic_id: topic_id, response_channel: response_tx }).await;
+        // TODO: add a timeout here, either implicit or explicit
+        match response_rx.await {
+            Ok(result) => {
+                return result
+            },
+            // this means that the sender is dropped without sending. This indicates that the actor has failed 
+            // critically at some point
+            Err(e) => {
+                // TODO: look into the anyhow code to understand how this is supposed to work
+            },
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct Broker<M: Message> {
-    // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
-    // nats client implements clone by itself, no need to wrap it in an arc
-    nats_client: Client,
-    buffer_size: usize,
+    topic_state_actor_handler: TopicsStateActorHandle<M>,
 }
 
 impl<M: Message> Broker<M> {
     pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
-        // check the topics hashmap to see if there is already a broadcast channel for that topic_id
-        let mut topics= self.topics.lock().unwrap();
-        // TODO: ^this should not panic, come back to this when I understand errors well enough
-        //       to return a proper error here
-
-        // The topics list stores senders, we want to access the sender for the topic
-        // id for which we are registering a connection. If the sender does not exist, then
-        // we create a new sender. Either way we copy the sender from the hashmap
-        let tx = match topics.entry(topic_id.clone()) { 
-            Occupied(entry) => entry.get().broadcast_sender.clone(),
-            Vacant(entry) => {
-                let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
-                let state = TopicScopedState::new(topic_id.clone(), self.buffer_size, sub);
-                entry.insert(state).clone_sender()
-            },
-        };
-
-        // create a new receiver
-        // we pass &self.topics into clone because clone does not consume the original pointer
-        let wrx: WrappedReceiver<M> = WrappedReceiver { 
-            topic_id: topic_id, receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
-        };
-        let wtx = WrappedSender {
-            broadcast_sender: tx, nats_client: self.nats_client.clone(),
-        };
-        
-        Ok((wtx, wrx))
+        self.topic_state_actor_handler.register(topic_id).await
     }
 }
 

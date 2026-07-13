@@ -37,3 +37,31 @@
             - it is not necessary to flush the remaining messages, etc. because we are cleaning up the last receiver. Any sent messages would have nobody to read them
         - [ ] drop messages that originated from this instance?
 
+    - ultimately decided not to go with this approach:
+        - actor model of communicating with the topic scoped state task
+            - the hashmap mapping topic_ids to the topic scoped state associated with that id is a globally required resource that many tasks need to access 
+            - while operating on one of the entries in this map, we need to perform an async operation
+                - this prevents us from holding the mutex on the hashmap across the await boundary 
+            - this topics map must be accessed any time the first connection to a topic_id is created or any time the last connection to a topic_id is dropped
+            - instead of sharing memory between websocket tasks by having the broker and the wrapped receiver hold and arc mutex to the hashmap, we should communicate with one actor async task that is in charge of accessing and operating on the topic scoped state map
+            - [ ] create the topic scoped state actor
+                - [ ] create a handler struct 
+                    - wraps two mpsc channels for sending messages to the topic scoped state actor
+                        - the register channel is a bounded channel that handles request to register a task with the broker, this issues a sender and a receiver that send and receive on the broadcast channel and nats core
+                        - the deregister channel is an unbounded channel that handlers requests to deregister a task with the broker. This is only called inside the wrapped receiver
+                            - we have to use an unbounded channel to deregister because the drop function is synchronous and writing to an unbounded channel is synchronous
+                    - the handler struct does not need access to the deregister channel sender because we don't need to deregister from the handler, just from the wrapped receiver
+                    - the new function of the handler struct also spawns the topic scoped state actor
+                        - the actor is a struct which wraps the mpsc receiver
+                        - the handler new function spawns a task which calls the actor run function
+                        - the actor run function receives messages from the channel in a loop and processes the messages
+                    - the handler struct implements clone
+                - [ ] create topic scoped state actor
+                    - [ ] the topic scoped state actor should have ownership of a weak sender for the deregister channel that it clones and upgrades into new wrapped receivers
+                - [ ] create graceful shutdown code that releases topic scoped state map when the actor is aborted
+                    - [ ] 
+            - [ ] add handler to access topic scoped state to the broker struct
+                - [ ]
+            - [ ] add handler to access the topic scoped state to the wrapped receivers
+                - [ ] indicate to the actor that one receiver for that topic is being dropped
+                - [ ] remove the topic from the hashmap if this is the last receiver

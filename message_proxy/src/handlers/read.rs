@@ -1,12 +1,8 @@
-use tokio::sync::broadcast::{
-    Sender as BCSender, 
-};
 use tokio::sync::oneshot::{
     Sender
 };
 use yrs::updates::encoder::Encode;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 use std::ops::Range;
 use tokio_util::sync::CancellationToken;
@@ -41,21 +37,29 @@ use crate::handlers::{
     Decoded,
     TaskError,
     ReaderEvent,
-    UpdateMessage
 };
+use crate::broker::{
+    WrappedSender,
+};
+use crate::api::operations::Operation;
+
 
 struct MessageOutcome {
     persisted_update: bool,
     persisted_deletion: bool,
     broadcast_message: bool,
+    internal_broadcast: bool,
+    nats_client_broadcast: bool,
 }
 
-impl From<(bool, bool, bool)> for MessageOutcome {
-    fn from(value: (bool, bool, bool)) -> Self {
+impl From<(bool, bool, bool, bool, bool)> for MessageOutcome {
+    fn from(value: (bool, bool, bool, bool, bool)) -> Self {
         MessageOutcome {
             persisted_update: value.0,
             persisted_deletion: value.1,
             broadcast_message: value.2,
+            internal_broadcast: value.3,
+            nats_client_broadcast: value.4,
         }
     }
 }
@@ -191,7 +195,7 @@ impl <R: Repository> WebsocketHandler<R> {
     async fn persist_and_broadcast_update(
         &self,
         encoded_update: Vec<u8>,
-        broker_sender: &BCSender<UpdateMessage>,
+        broker_sender: &WrappedSender<Operation>,
     ) -> Result<(Option<u32>, MessageOutcome), TaskError> {
         let (mut persisted_update, mut persisted_deletion) = (false, false);
         // parse the optional offset of the update from the message
@@ -236,14 +240,23 @@ impl <R: Repository> WebsocketHandler<R> {
             ).await?;
         }
         // broadcast the message if it had either novel updates or novel deletions
+        let (mut internal_broadcast, mut nats_client_broadcast) = (false, false);
         if persisted_update || persisted_deletion {
-            let update_message = UpdateMessage {
-                client_id: self.client_id,
-                offset: None,
-                payload: Arc::new(encoded_update),
-                has_deletion: !new_delete_set.is_none(),
-            };
-            broker_sender.send(update_message)?;
+            let operation = Operation::new(
+                self.topic_id, self.client_id, new_offset, encoded_update, persisted_deletion,
+            );
+            // failure to broadcast the message is considered a non-recoverable failure because that
+            // means that all receivers for this broadcast channel have been dropped, including the 
+            // one associated with this websocket connection. Failure to broadcast to nats should be
+            // treated as a recoverable failure. 
+            let (broadcast_result, nats_client_result) = broker_sender.send(
+                operation
+            ).await;
+            if let Err(e) = broadcast_result {
+                return Err(TaskError::ReaderToBroadcastSendError(e))
+            }
+            internal_broadcast = broadcast_result.is_ok();
+            nats_client_broadcast = nats_client_result.is_ok();
         }
 
         Ok((
@@ -252,6 +265,8 @@ impl <R: Repository> WebsocketHandler<R> {
                 persisted_update, 
                 persisted_deletion, 
                 persisted_update || persisted_deletion,
+                internal_broadcast,
+                nats_client_broadcast,
             )),
         ))
     }
@@ -260,7 +275,7 @@ impl <R: Repository> WebsocketHandler<R> {
     async fn process_client_sync_step_two(
         &self,
         encoded_update: Vec<u8>,
-        broker_sender: &BCSender<UpdateMessage>,
+        broker_sender: &WrappedSender<Operation>,
         start: Instant,
     ) -> Result<Option<u32>, TaskError> {
         let update_size_bytes = encoded_update.len();
@@ -275,6 +290,8 @@ impl <R: Repository> WebsocketHandler<R> {
             skipped_write_update=!message_outcome.persisted_update,
             skipped_write_delete=!message_outcome.persisted_deletion,
             skipped_broadcast=!message_outcome.broadcast_message,
+            internal_broadcast=message_outcome.internal_broadcast,
+            nats_client_broadcast=message_outcome.nats_client_broadcast,
             update_size_bytes,
             topic_id=self.topic_id.as_hyphenated().to_string(),
             user_id=self.user_id.as_hyphenated().to_string(),
@@ -288,7 +305,7 @@ impl <R: Repository> WebsocketHandler<R> {
     async fn reader_hot_path(
         &self,
         encoded_update: Vec<u8>,
-        sender_broker: &BCSender<UpdateMessage>,
+        sender_broker: &WrappedSender<Operation>,
         start: Instant,
     ) -> Result<Option<u32>, TaskError> {
         let update_size_bytes = encoded_update.len();
@@ -302,6 +319,8 @@ impl <R: Repository> WebsocketHandler<R> {
             skipped_write_update=!message_outcome.persisted_update,
             skipped_write_delete=!message_outcome.persisted_deletion,
             skipped_broadcast=!message_outcome.broadcast_message,
+            internal_broadcast=message_outcome.internal_broadcast,
+            nats_client_broadcast=message_outcome.nats_client_broadcast,
             update_size_bytes,
             duration_ns = start.elapsed().as_nanos(),
             topic_id=self.topic_id.as_hyphenated().to_string(),
@@ -316,7 +335,7 @@ impl <R: Repository> WebsocketHandler<R> {
     pub async fn read(
         &self,
         mut websocket_receiver: SplitStream<WebSocket>,
-        broker_sender: BCSender<UpdateMessage>,
+        broker_sender: WrappedSender<Operation>,
         sync_sender: Sender<ReaderEvent>,
         cancel_token: CancellationToken,
     ) -> Result<(), TaskError> {

@@ -5,6 +5,7 @@ pub mod broker;
 pub mod config {
     pub mod postgres;
     pub mod otel;
+    pub mod nats;
 }
 mod repository;
 mod state_machine;
@@ -13,29 +14,31 @@ use axum::{
     Router,
     routing::{any,get},
 };
-use uuid::Uuid;
 use crate::{
     broker::{Broker, BrokerBuilder}, 
-    handlers::{handler, UpdateMessage}, 
+    handlers::{handler}, 
     repository::{Repository, postgres::PgRepo},
     config::{
       postgres,
       otel::{self, MetricsWS},
+      nats,
     },
 };
 use tracing::{
     event,
     Level,
 };
-// use tracing_subscriber::{
-//     filter::LevelFilter,
-// };
 
+pub mod api {
+    pub mod operations;
+}
+
+use api::operations::Operation;
 
 
 #[derive(Clone)]
 struct AppState<R: Repository> {
-    broker: Broker<Uuid, UpdateMessage>,
+    broker: Broker<Operation>,
     // TODO: learn more about the difference between dynamic dispatch and static dispatch
     // for now it seemed prudent to use static dispatch here because we are always going to know the
     // repository type at compile time and we are not going to use multiple repository types 
@@ -54,11 +57,22 @@ pub async fn run() {
     let pool = match postgres::build_postgres_pool().await {
         Ok(pool) => pool,
         Err(err) => {
+            // TODO: confirm that the logger provider guard that shuts down the logger 
+            // sdk resources flushes this log before exiting
             tracing::error!("failed to build postgres pool with error: {err}");
             return;
         }
     };
-    let broker = BrokerBuilder::default().build::<Uuid, UpdateMessage>();
+    let nats_client = match nats::build_nats_client().await {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::error!("failed to build the nats client with error: {err}");
+            return;
+        }
+    };
+    let broker: Broker<Operation> = BrokerBuilder::default()
+        .nats_client(nats_client)
+        .build();
     // when creating a router the state type parameter indicates the type of the state
     // struct that has not yet been passed to the router (using .with_state(: S))
     // this is why we don't parameterize the with_state function, that would indicate

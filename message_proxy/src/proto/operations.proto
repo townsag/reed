@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package api.operations;
+
+message Operation {
+    // this may look odd, it is intentional 
+    // I didn't want to have a potential panic in the deserialization code 
+    // for the document_id. This would have been the case if the document_id
+    // was represented as a hyphenated string or a byte array.
+    // If we represent the document_id as two int64s, they will always be
+    // equivalent to 16 int8s. A uuid is an array of 16 int8s
+    fixed64 document_id_high = 1;
+    fixed64 document_id_low = 2;
+    fixed64 client_id = 3;
+    optional fixed32 offset = 4;
+    bytes payload = 5;
+    bool has_deletion = 6;
+}

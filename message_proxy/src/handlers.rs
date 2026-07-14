@@ -1,3 +1,4 @@
+use futures::SinkExt;
 // option tab is the command to prompt VSCode to suggest symbols
 use tokio::sync::oneshot;
 use std::sync::Arc;
@@ -6,13 +7,12 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use axum::{
-    extract::ws::{
-        WebSocket, 
-        WebSocketUpgrade,
-    },
-    extract::Path,
-    extract::Query,
-    extract::State,
+    extract::{
+        Path, Query, State, 
+        ws::{
+            CloseFrame, Message, WebSocket, WebSocketUpgrade,
+        }
+    }, 
     response::Response,
 };
 use futures_util::{
@@ -21,7 +21,7 @@ use futures_util::{
 use yrs::{
     sync::protocol::SyncMessage,
 };
-use crate::broker::Routable;
+use crate::{api::operations::Operation};
 use crate::repository::{Repository, RepoError};
 use crate::AppState;
 use crate::config::otel::{
@@ -38,20 +38,6 @@ enum ReaderEvent {
     ClientSyncStep1(Vec<u8>, Instant),
 }
 
-#[derive(Clone,Debug)]
-pub struct UpdateMessage {
-    client_id: u64,
-    offset: Option<u32>,
-    payload: Arc<Vec<u8>>,
-    has_deletion: bool,
-}
-
-impl Routable for UpdateMessage {
-    type Key = u64;
-    fn key(&self) -> &Self::Key {
-        return &self.client_id;
-    }
-}
 
 #[derive(serde::Deserialize)]
 pub struct ClientParams {
@@ -110,7 +96,7 @@ enum TaskError {
     #[error("failed to send a message from the reader to the writer")]
     ReaderToWriterSendError(ReaderEvent),
     #[error("failed to send an update message from the reader to the broker")]
-    ReaderToBroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<UpdateMessage>),
+    ReaderToBroadcastSendError(#[from] tokio::sync::broadcast::error::SendError<Arc<Operation>>),
 }
 
 // TODO: parse the user id from a query parameter with a jwt in it
@@ -122,10 +108,22 @@ async fn handle_socket<R: Repository>(
     state: AppState<R>,
 ) {
     let _guard = state.metrics_ws.ws_lifecycle_guard();
+    // split the websocket into a message sender and a message receiver task
+    // we will use the receiver to send messages from the client to the broker and the sender 
+    // to send messages from the broker to the client
+    let (mut websocket_sender, websocket_receiver) = socket.split();
     // register the websocket connection with the broker
     let (
         broker_sender, broker_receiver
-    ) = state.broker.register(topic_id);
+    ) = match state.broker.register(topic_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            // TODO: we should log here so we know how frequently the broker fails to register
+            event!(Level::WARN, error=%e, "failed to register with the broker");
+            let _ = websocket_sender.send(Message::Close(Some(CloseFrame { code: 1011, reason: "internal server error".into() }))).await;
+            return
+        }
+    };
     // create a oneshot channel that the read task can use to send websocket lifecycle
     // events to the write task
     let (
@@ -136,10 +134,6 @@ async fn handle_socket<R: Repository>(
     // we do not need to communicate the reason for cancellation
     let cancel_token = CancellationToken::new();
     event!(Level::INFO, "processing connection for: topic_id: {topic_id},  user_id: {user_id}, client_id: {client_id}");
-    // split the websocket into a message sender and a message receiver task
-    // we will use the receiver to send messages from the client to the broker and the sender 
-    // to send messages from the broker to the client
-    let (websocket_sender, websocket_receiver) = socket.split();
     // we spawn two threads then pass the references to websocket handler into each thread
     // you and I know that the threads will both exit before the handle_socket function
     // exits so there is no chance that the websocket handler (stack data) will go out 

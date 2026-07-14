@@ -4,13 +4,14 @@ use tokio::sync::broadcast::{
 use tokio::sync::oneshot::{
     Receiver,
 };
+
 use yrs::encoding::write::Write;
 use yrs::updates::encoder::{Encoder, EncoderV1};
 use std::collections::HashMap;
 use std::time::Instant;
 use std::ops::Range;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 use axum::{
     extract::ws::{
         Message, 
@@ -33,6 +34,7 @@ use yrs::{
 use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository};
 use crate::state_machine::{Writer, WriterAwaitingHandshake, WriterHotPath};
+use crate::api::operations::Operation;
 use tracing::{Instrument, Level, event, info_span, instrument};
 
 
@@ -40,7 +42,6 @@ use crate::handlers::{
     WebsocketHandler,
     TaskError,
     ReaderEvent,
-    UpdateMessage,
 };
 
 // TODO: these logs should be part of the instrumentation for server sync step one messages
@@ -244,13 +245,15 @@ impl <R: Repository> WebsocketHandler<R> {
     #[instrument(skip_all,fields(skipped_message))]
     async fn write_hot_path_loop(
         &self,
-        update: UpdateMessage, 
+        update: Arc<Operation>, 
         websocket_sender: &mut SplitSink<WebSocket, Message>
     ) -> Result<(), TaskError> {
         let start = Instant::now();
         let mut skipped_message = true;
-        if *update.key() != self.client_id {
+        if update.sender_id() != self.client_id {
             skipped_message = false;
+            // only copy the update message payload at the network boundary. This
+            // saves us from doing unnecessary work 
             let ws_message = Message::Binary(SyncMessage::Update(update.payload.to_vec()).encode_v1().into());
             // TODO: batch read messages from the broker queue, use try receive
             // TODO: batch send messages, concatenate many broker messages into one ws message
@@ -297,7 +300,7 @@ impl <R: Repository> WebsocketHandler<R> {
     pub async fn write(
         &self,
         mut websocket_sender: SplitSink<WebSocket, Message>,
-        mut broker_receiver: WrappedReceiver<Uuid, UpdateMessage>,
+        mut broker_receiver: WrappedReceiver<Operation>,
         sync_receiver: Receiver<ReaderEvent>,
         cancel_token: CancellationToken,
     ) -> Result<(), TaskError> {

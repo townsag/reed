@@ -27,6 +27,6 @@ cargo run --bin message_proxy
 cargo run --bin tui -- <hostname> <topic_id> <user_id> <client_id> 2> error2.log
 ```
 example:
-```
+```bash
 cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 2 2> error2.log
 ```

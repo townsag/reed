@@ -61,7 +61,7 @@ services:
       context: ./message_proxy/
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3000-3001:3000"
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_USER=${POSTGRES_USER}
@@ -86,6 +86,9 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    deploy:
+      mode: replicated
+      replicas: 2
   nats:
     image: nats
     ports:

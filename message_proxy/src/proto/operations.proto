@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package v1.operations;
+package api.operations;
 
 message Operation {
     // this may look odd, it is intentional 

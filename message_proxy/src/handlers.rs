@@ -21,7 +21,7 @@ use futures_util::{
 use yrs::{
     sync::protocol::SyncMessage,
 };
-use crate::{v1::operations::Operation};
+use crate::{api::operations::Operation};
 use crate::repository::{Repository, RepoError};
 use crate::AppState;
 use crate::config::otel::{

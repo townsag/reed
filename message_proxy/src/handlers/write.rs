@@ -34,7 +34,7 @@ use yrs::{
 use crate::broker::{Routable, WrappedReceiver};
 use crate::repository::{Repository};
 use crate::state_machine::{Writer, WriterAwaitingHandshake, WriterHotPath};
-use crate::v1::operations::Operation;
+use crate::api::operations::Operation;
 use tracing::{Instrument, Level, event, info_span, instrument};
 
 

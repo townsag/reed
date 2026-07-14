@@ -41,7 +41,7 @@ use crate::handlers::{
 use crate::broker::{
     WrappedSender,
 };
-use crate::v1::operations::Operation;
+use crate::api::operations::Operation;
 
 
 struct MessageOutcome {

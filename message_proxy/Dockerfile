@@ -1,4 +1,7 @@
 FROM rust:1.94.1-alpine3.23 AS builder
+# download the protobuf compiler 
+RUN apk update && \
+    apk add --no-cache protoc
 # copy in the cargo file so we know what the dependencies are
 COPY Cargo.lock Cargo.toml /app/
 # download and build the dependencies
@@ -6,6 +9,10 @@ WORKDIR /app
 # TODO: this is a hack, see cargo chef
 # Stub entrypoint so we can cache dependency compilation
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+# copy in the build.rs script so that our generated proto code is also
+# created during the build
+COPY ./src/proto/ src/proto/
+COPY build.rs build.rs
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release

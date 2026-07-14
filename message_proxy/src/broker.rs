@@ -7,14 +7,14 @@ use futures::{FutureExt, StreamExt};
 use tokio::sync::broadcast::{
     self, Receiver, Sender, error::RecvError, error::SendError,
 };
+use tokio::sync::OnceCell;
 use tokio::task::{
     JoinHandle,
 };
 // use the std implementation of Mutex because we don't have to hold the lock across await points
-use std::sync::{Mutex, Arc};
+use std::sync::{Mutex, Arc, Weak};
 use std::hash::Hash;
 use std::collections::{
-    hash_map::Entry::{Occupied, Vacant},
     HashMap,
 };
 use async_nats::{
@@ -27,13 +27,6 @@ use tracing::{event, Level};
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
 // lifetimes would work on that one
-
-// consider adding some idea of back pressure
-// consider that this implementation might be simpler if I make the idea of a
-// partition / topic id a first class citizen. Like I could make the 
-
-// remove the clone trait bound on message by using Arc
-// send reference counted pointers to messages through the channels
 
 // const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 100;
 const BROADCAST_CHANNEL_BUFFER_SIZE: usize = 20_000;
@@ -93,10 +86,9 @@ impl HasNatsClient for Missing {
 /*
 Using the builder pattern for the broker accomplishes two things:
 - we can add ergonomic ways to make many configurations in the future
-- we can prevent the run method of the broker from being scheduled twice
+- we can prevent the build method of the broker from being scheduled twice
+    - this is done by taking ownership of self (the broker builder) inside the build function
 */
-// TODO: rename the build method to run to communicate that it starts an async task
-// TODO: prevent the run method from being called twice using ownership rules
 pub struct BrokerBuilder <N: HasNatsClient> {
     buffer_size: usize,
     nats_client: N::Client,
@@ -117,7 +109,6 @@ impl <N: HasNatsClient> BrokerBuilder <N> {
 }
 
 impl BrokerBuilder<Missing> {
-    // TODO: verify that this can still be called using function chaining
     pub fn nats_client(
         self,
         nats_client: Client,
@@ -130,6 +121,13 @@ impl BrokerBuilder<Missing> {
     }
 }
 
+// - The send trait bound here indicates that ownership of the message value can be transferred
+//   between threads
+//      - requires either synchronization or lifetimes
+// - the sync trait indicates that multiple threads can access the value at the same time
+//      - requires synchronization
+// - the static lifetime indicates that the message isn't made up of borrowed references
+//   to data that may be owned elsewhere and dropped
 pub trait Message: Routable + TryFrom<Bytes, Error: std::fmt::Display> + ToBytes + Send + Sync + 'static {}
 impl <T: Routable + TryFrom<Bytes, Error: std::fmt::Display> + ToBytes + Send + Sync + 'static> Message for T {}
 
@@ -138,9 +136,8 @@ impl BrokerBuilder<Present> {
         self,
     ) -> Broker<M> {
         Broker{
-            topics: Arc::new(Mutex::new(
-                HashMap::<M::SubjectId, TopicScopedState<M>>::new()
-            )),
+            topics: Arc::new(Mutex::new(HashMap::new())),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
             nats_client: self.nats_client,
             buffer_size: self.buffer_size,
         }
@@ -157,25 +154,11 @@ pub enum WrappedNatsClientError {
     NatsClientSkipped,
 }
 
-// pub struct SenderMetrics {
-//     // this value is only available on a successful send
-//     // maybe we need to differentiate between acceptable and 
-//     // critical partial failures
-//     broadcast_receivers: Option<usize>,
-//     len_nats_client_buff: usize,
-// }
-
-// impl <M: Routable + Clone> From<SendError<M>> for WrappedSenderError<M> {
-//     fn from(value: SendError<M>) -> Self {
-//         WrappedSenderError::Broadcast(value)
-//     }
-// }
-
 impl <M: Message> WrappedSender<M> {
-    /// Attempts to send the value on the broadcast channel
-    /// Secondly, attempts to publish the message to the nats channel via the nats client
-    /// An error type return with the try send error means the broadcast send
-    /// was still successful
+    /// Attempts to send the value on the broadcast channel.
+    /// Secondly, attempts to publish the message to the nats channel via the nats client.
+    /// This function is best effort, it may fail to send on one modality but succeed
+    /// at another modality.
     /// This function is async but it will not block execution of the current task.
     /// Sending a message to the broadcast channel is non blocking.
     /// If the nats client buffer is full, we instead skip sending the message to 
@@ -206,29 +189,8 @@ impl <M: Message> WrappedSender<M> {
 
 
 pub struct WrappedReceiver<M: Message> {
-    topic_id: M::SubjectId,
-    // TODO: modify the wrapped receiver so that clients can't clone the receiver inside the wrapped receiver
     receiver: Receiver<Arc<M>>,
-    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
-}
-
-impl<M: Message> Drop for WrappedReceiver<M> {
-    fn drop(&mut self) {
-        // upon this receiver going out of scope, we need to check if there are any remaining
-        // receivers open for this topic (other than this receiver) and delete the topic from
-        // the mapping if there are any other receivers
-
-        // if the call to lock the mutex fails, that means that another thread has panicked 
-        // while holding the mutex. In that case we can return
-        if let Ok(mut topics) = self.topics.lock() {
-            // if there are no other receivers for this topic, we should expect the receiver 
-            // count to be 1 or 0. Remove the entry from the hashmap if there are no other
-            // receivers
-            if let Some(state) = topics.get(&self.topic_id) && state.broadcast_sender.receiver_count() <= 1 {
-                topics.remove(&self.topic_id);
-            }
-        }
-    }
+    _state_guard: Arc<TopicScopedState<M>>,
 }
 
 impl<M: Message> WrappedReceiver<M> {
@@ -254,20 +216,13 @@ impl <M: Message> Drop for TopicScopedState<M> {
     }
 }
 
-// - The send trait bound here indicates that ownership of the message value can be transferred
-//   between threads
-//      - requires either synchronization or lifetimes
-// - the sync trait indicates that multiple threads can access the value at the same time
-//      - requires synchronization
-// - the static lifetime indicates that the message isn't made up of borrowed references
-//   to data that may be owned elsewhere and dropped
 impl <M: Message> TopicScopedState<M> {
     fn new(topic_id: M::SubjectId, buffer_size: usize, mut sub: Subscriber) -> Self {
         // create the broadcast channel
         let tx: Sender<Arc<M>> = broadcast::channel(buffer_size).0;
         let broadcast_sender = tx.clone();
-        // create the async task that polls the nats core subscriber and published messages
-        // messages to the broadcast channel
+        // create the async task that polls the nats core subscriber and publishes messages
+        // to the broadcast channel
         let middleware_handle = tokio::spawn(async move {
             loop {
                 // read from the subscriber
@@ -277,8 +232,8 @@ impl <M: Message> TopicScopedState<M> {
                         let parsed = M::try_from(msg.payload);
                         match parsed {
                             Ok(value) => {
-                                if let Err(_) = tx.send(Arc::new(value)) {
-                                    event!(Level::WARN, topic_id=%topic_id, "failed to write message to broadcast sender");
+                                if let Err(e) = tx.send(Arc::new(value)) {
+                                    event!(Level::WARN, topic_id=%topic_id, error=%e, "failed to write message to broadcast sender");
                                     return
                                 }
                             },
@@ -298,53 +253,79 @@ impl <M: Message> TopicScopedState<M> {
         // return self
         TopicScopedState { broadcast_sender: broadcast_sender, nats_core_subscriber_task: middleware_handle }
     }
-    fn clone_sender(&self) -> Sender<Arc<M>> {
-        self.broadcast_sender.clone()
-    }
 }
 
 #[derive(Clone)]
 pub struct Broker<M: Message> {
     // mapping of topic ids to senders that can be used to signal the subscribers to a topic
-    topics: Arc<Mutex<HashMap<M::SubjectId, TopicScopedState<M>>>>,
+    topics: Arc<Mutex<HashMap<M::SubjectId, Weak<TopicScopedState<M>>>>>,
+    in_flight: Arc<Mutex<HashMap<M::SubjectId, Arc<OnceCell<Arc<TopicScopedState<M>>>>>>>,
     // nats client implements clone by itself, no need to wrap it in an arc
     nats_client: Client,
     buffer_size: usize,
 }
 
 impl<M: Message> Broker<M> {
-    pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
-        // check the topics hashmap to see if there is already a broadcast channel for that topic_id
-        let mut topics= self.topics.lock().unwrap();
-        // TODO: ^this should not panic, come back to this when I understand errors well enough
-        //       to return a proper error here
-
-        // The topics list stores senders, we want to access the sender for the topic
-        // id for which we are registering a connection. If the sender does not exist, then
-        // we create a new sender. Either way we copy the sender from the hashmap
-        let tx = match topics.entry(topic_id.clone()) { 
-            Occupied(entry) => entry.get().broadcast_sender.clone(),
-            Vacant(entry) => {
-                let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
-                let state = TopicScopedState::new(topic_id.clone(), self.buffer_size, sub);
-                entry.insert(state).clone_sender()
-            },
+    async fn get_or_insert_state(&self, topic_id: M::SubjectId) -> Result<Arc<TopicScopedState<M>>, async_nats::Error> {
+        // look for the topic scoped state in the topics mapping 
+        {
+            let topics = self.topics.lock().unwrap();
+            if let Some(w) = topics.get(&topic_id) {
+                if let Some(s) = w.upgrade() {
+                    return Ok(s);
+                }
+            }
+        }
+        // if it cannot be found in the topics mapping, take the lock on the in_flight mapping 
+        // and insert or get a once cell
+        let cell = {
+            let mut in_flight = self.in_flight.lock().unwrap();
+            in_flight.entry(topic_id.clone())
+                .or_insert_with(|| {
+                    Arc::new(OnceCell::new())
+                }).clone()
         };
 
+        // use the get_or_try_init function to create a new topic scoped state and insert the new
+        // topic scoped state into the topics map. All currently in flight invocations of get_or_insert_state
+        // will get the state from the once cell. All future invocations of get_or_insert_state will
+        // get state from the topics map
+        let state = cell.get_or_try_init(async || -> Result<Arc<TopicScopedState<M>>, async_nats::Error> {
+            let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
+            let state = Arc::new(TopicScopedState::new(topic_id.clone(), self.buffer_size, sub));
+            self.topics.lock().unwrap().insert(topic_id.clone(), Arc::downgrade(&state));
+            Ok(state)
+        }).await.cloned();
+
+        // remove from the in flight mapping only on success. When state is the Ok variant, we are 
+        // guaranteed that the TopicScopedState object was added to the OnceCell and the topics hashmap
+        // all concurrent invocations of get_or_insert_state hold a reference to the OnceCell already
+        // and can get the created state object from the OnceCell. All future invocations of 
+        // get_or_insert_state will get the TopicScopedState from the topics hashmap. As long as there
+        // are references to the OnceCell in other tasks that are still requesting the state, the weak
+        // pointer inside topics will not be dropped
+        if state.is_ok() {
+            self.in_flight.lock().unwrap().remove(&topic_id);
+        }
+        state
+    }
+    pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
+        let state = self.get_or_insert_state(topic_id.clone()).await?;
         // create a new receiver
         // we pass &self.topics into clone because clone does not consume the original pointer
         let wrx: WrappedReceiver<M> = WrappedReceiver { 
-            topic_id: topic_id, receiver: tx.subscribe(), topics: Arc::clone(&self.topics)
+            receiver: state.broadcast_sender.subscribe(), _state_guard: Arc::clone(&state),
         };
         let wtx = WrappedSender {
-            broadcast_sender: tx, nats_client: self.nats_client.clone(),
+            broadcast_sender: state.broadcast_sender.clone(), nats_client: self.nats_client.clone(),
         };
         
         Ok((wtx, wrx))
     }
+    // TODO: periodically sweep the in_flight hashmap for OnceCells that are not referenced by any tasks calling get_or_insert_state
+    // TODO: periodically sweep the topics hashmap for Weak pointers that are empty
+    // (self.topics.retain(|_, w| w.strong_count() > 0))
 }
-
-// TODO: make a list of all other things that need to be cleaned up
 
 pub fn get_id() -> usize {
     // using the static keyword is like declaring a piece of memory with the lifetime of 

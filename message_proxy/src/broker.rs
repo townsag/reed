@@ -234,6 +234,10 @@ impl <M: Message> TopicScopedState<M> {
                             Ok(value) => {
                                 if let Err(e) = tx.send(Arc::new(value)) {
                                     event!(Level::WARN, topic_id=%topic_id, error=%e, "failed to write message to broadcast sender");
+                                    // failing to send on the broadcast channel means that all broadcast receivers for this channel 
+                                    // have already been cleaned up. That also means that this task will be dropped soon either way
+                                    // because we cleanup this task when all Arc copies of TopicScopedState are dropped and those
+                                    // Arc copies are held by the wrapped receivers
                                     return
                                 }
                             },

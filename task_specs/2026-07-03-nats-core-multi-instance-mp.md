@@ -36,8 +36,32 @@
             - it is not necessary to flush the remaining messages in the broadcast channel, etc. because we are cleaning up the last receiver. Any sent messages would have nobody to read them
         - [ ] drop messages that originated from this instance?
     - [ ] record metrics:
+        - as per the opentelemetry api documentation
+            - [ ] instruments are designed to be created once and then shared many times throughout the code, create the instruments once at the broker level then distribute the instruments where necessary using clone
         - [ ] when do we fail to deserialize messages that are read from the nats subscriber
         - [ ] how many messages are we receiving from the nats subscriber per minute, per instance
+            - this may require an instance id
 
 ## Things to test:
-- does the subscriber actually get dropped when the last task for that topic is dropped?
+- [x] does the subscriber actually get dropped when the last task for that topic is dropped?
+    - this was manually verified for the simple case using print statement debugging. I will need a more complicated debugging approach to verify that the nats subscriber is dropped in all cases
+    - I am reasonably confident that the code is correct because it is composed from native Arc and Weak pointers
+
+## Testing Steps:
+- start the observability subsystem and message proxy subsystems:
+```bash
+# in a second terminal window
+reed % docker compose -f docker-compose-clickstack.yml --env-file docker/envs/clickstack-subsytem.env up  
+# in the first terminal window
+docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env down --volumes
+docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env build
+docker compose -f docker-compose-mp-subsystem.yml --env-file docker/envs/mp-subsystem.env up
+```
+- create two different clients, one for each instance of the message proxy service
+```bash
+# in a third terminal window
+cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 1 2> error2.log
+# in a fourth terminal window
+cargo run --bin tui -- localhost:3001 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 2 2> error2.log
+```
+- make edits on either of the clients, watch that messages are transferred between the two instances of the message broker service using 

@@ -243,6 +243,7 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         // .add_directive("tonic=off".parse().unwrap())
         // .add_directive("reqwest=off".parse().unwrap());
         // === start directives we may want ===
+        .add_directive("async_nats=info".parse().unwrap())
         .add_directive("h2=info".parse().unwrap())
         .add_directive("tower=info".parse().unwrap())
         .add_directive("opentelemetry-otlp=info".parse().unwrap())
@@ -263,6 +264,7 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         .expect("failed to parse log level env var: RUST_LOG")
         .add_directive(format!("message_proxy={}", mp_module_log_level).parse().unwrap())
         .add_directive("sqlx=warn".parse().unwrap())
+        .add_directive("async_nats=info".parse().unwrap())
         .add_directive("h2=info".parse().unwrap())
         .add_directive("tower=info".parse().unwrap())
         .add_directive("opentelemetry-otlp=info".parse().unwrap())

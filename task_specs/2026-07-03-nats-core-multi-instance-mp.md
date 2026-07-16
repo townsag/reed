@@ -17,7 +17,7 @@
             - [ ] why they are dropped
         - [ ] what is the average length of the nats client mpsc channel
             - this is not available information
-        - [ ] todo
+        - [ ] what is the degree of fan out for each message? Are we sending message to many machines or just one machine
 - [ ] receive updates from nats core:
     - [x] update the broker to have a second sender type that we use to receive messages from nats core
         - we keep track of the count of receivers when deciding when to remove the broadcast Sender from the hashmap of topic_ids and broadcast senders
@@ -39,6 +39,7 @@
         - as per the opentelemetry api documentation
             - [ ] instruments are designed to be created once and then shared many times throughout the code, create the instruments once at the broker level then distribute the instruments where necessary using clone
         - [ ] when do we fail to deserialize messages that are read from the nats subscriber
+        - [ ] what is the client to client latency time for updates? How long does it take for a client to: be received at instance 1 --> be sent over nats core --> be received by instance 2 --> be sent over the websocket to the client/
         - [ ] how many messages are we receiving from the nats subscriber per minute, per instance
             - this may require an instance id
 

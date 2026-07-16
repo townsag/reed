@@ -1,0 +1,73 @@
+flowchart LR
+    clientAS[clientA]
+    clientBS[clientB]
+    clientCS[clientC]
+    clientDS[clientD]
+    clientES[clientE]
+
+    clientAR[clientA]
+    clientBR[clientB]
+    clientCR[clientC]
+    clientDR[clientD]
+    clientER[clientE]
+
+    nats_core(nats core)
+
+    subgraph message proxy 1
+        read_taskA(read task A)
+        read_taskB(read task B)
+        read_taskC(read task C)
+        read_taskD(read task D)
+        read_taskE(read task E)
+
+        write_taskA(write task A)
+        write_taskB(write task B)
+        write_taskC(write task C)
+        write_taskD(write task D)
+        write_taskE(write task E)
+
+        nats_client(nats client)
+
+        subgraph broker
+            bc1(broadcast channel 1)
+            bc2(broadcast channel 2)
+
+            sub1(nats core subscriber 1)
+            sub2(nats core subscriber 2)
+        end
+    end
+
+    
+    clientAS --> read_taskA
+    write_taskA --> clientAR
+    clientBS --> read_taskB
+    write_taskB --> clientBR
+    clientCS --> read_taskC
+    write_taskC --> clientCR
+    clientDS --> read_taskD
+    write_taskD --> clientDR
+    clientES --> read_taskE
+    write_taskE --> clientER
+
+    read_taskA --> bc1
+    read_taskB --> bc1
+    read_taskC --> bc1
+    read_taskD --> bc2
+    read_taskE --> bc2
+
+    read_taskA --> nats_client
+    read_taskB --> nats_client
+    read_taskC --> nats_client
+    read_taskD --> nats_client
+    read_taskE --> nats_client
+
+    nats_client --> nats_core
+
+    bc1 --> write_taskA
+    bc1 --> write_taskB
+    bc1 --> write_taskC
+    bc2 --> write_taskD
+    bc2 --> write_taskE
+
+    sub1 --> bc1
+    sub2 --> bc2

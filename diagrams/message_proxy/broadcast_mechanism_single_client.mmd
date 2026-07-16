@@ -1,0 +1,40 @@
+flowchart LR
+    clientA[clientA]
+    clientN@{ shape: processes, label: "N clients" }
+    mp2[message proxy 2]
+    nats_core@{ shape: das, label: "nats core" }
+    pg@{ shape: cyl, label: "Postgres" }
+    subgraph message proxy 1
+        subgraph read task
+            ws_reader(ws_reader)
+            broadcast_sender1(broadcast_sender)
+            nats_client(nats_client)
+        end
+        subgraph write task
+            ws_writer(ws_writer)
+            broadcast_receiver(broadcast_receiver)
+        end
+        subgraph broker struct
+            broadcast_sender2(broadcast_sender)
+            nats_sub(nats_core_subscriber)
+        end
+    end
+
+    clientA --> ws_reader
+    ws_writer --> clientA
+    nats_client --> nats_core
+    nats_core --receive from clients connected to other instances--> nats_sub
+    nats_sub --broadcast to clients connected to this instance--> broadcast_sender2
+
+    ws_reader --broadcast to other instances--> nats_client
+    ws_reader --persist message--> pg
+    pg --read missed messages or message history--> ws_writer
+    ws_reader --send to other clients connected to this instance--> broadcast_sender1
+    broadcast_receiver --> ws_writer
+
+    broadcast_sender1 --> broadcast_receiver
+    broadcast_sender2 --> broadcast_receiver
+
+    mp2 <--> nats_core
+
+    clientN <--> mp2

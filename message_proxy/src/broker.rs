@@ -271,23 +271,31 @@ pub struct Broker<M: Message> {
 
 impl<M: Message> Broker<M> {
     async fn get_or_insert_state(&self, topic_id: M::SubjectId) -> Result<Arc<TopicScopedState<M>>, async_nats::Error> {
-        // look for the topic scoped state in the topics mapping 
-        {
-            let topics = self.topics.lock().unwrap();
-            if let Some(w) = topics.get(&topic_id) {
-                if let Some(s) = w.upgrade() {
-                    return Ok(s);
-                }
-            }
-        }
-        // if it cannot be found in the topics mapping, take the lock on the in_flight mapping 
-        // and insert or get a once cell
+        // look for the topic scoped state in the topics mapping. If it is not in the mapping, then
+        // create a once cell that many concurrent clients could use to initialize the topic scoped
+        // state for that topic without racing 
+        // Note: it is important to treat checking that the topic scoped state is missing for a
+        // topic_id and creating the OnceCell for that topic_id as atomic. This prevents a 
+        // time-of-check vs time-of-use race condition in which the topics hashmap is empty for
+        // a topic_id and by the time the OnceCell is created for that topic_id, some other task
+        // has already filled the topics map for that topic_id
         let cell = {
+            let topics = self.topics.lock().unwrap();
+            let s = topics.get(&topic_id).and_then(|w| w.upgrade());
+            if let Some(topic_scoped_state) = s {
+                return Ok(topic_scoped_state);
+            }
+            // if it cannot be found in the topics mapping, take the lock on the in_flight mapping 
+            // and insert or get a once cell
             let mut in_flight = self.in_flight.lock().unwrap();
-            in_flight.entry(topic_id.clone())
+            let cell = in_flight
+                .entry(topic_id.clone())
                 .or_insert_with(|| {
                     Arc::new(OnceCell::new())
-                }).clone()
+                })
+                .clone();
+            cell            
+
         };
 
         // use the get_or_try_init function to create a new topic scoped state and insert the new
@@ -298,19 +306,18 @@ impl<M: Message> Broker<M> {
             let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
             let state = Arc::new(TopicScopedState::new(topic_id.clone(), self.buffer_size, sub));
             self.topics.lock().unwrap().insert(topic_id.clone(), Arc::downgrade(&state));
+            // remove from the in flight mapping only on success. When state is the Ok variant, we are 
+            // guaranteed that the TopicScopedState struct was added to the OnceCell and the topics hashmap.
+            // All concurrent invocations of get_or_insert_state hold a reference to the OnceCell already
+            // and can get the created state struct from the OnceCell. All future invocations of 
+            // get_or_insert_state will get the TopicScopedState from the topics hashmap (this is guaranteed
+            // by the fact that we take the lock inside this closure). As long as there are references to
+            // the OnceCell in other tasks that are still requesting the state, the weak pointer inside
+            // topics will not be dropped, even if this value topic scoped state struct is dropped
+            self.in_flight.lock().unwrap().remove(&topic_id);
             Ok(state)
         }).await.cloned();
 
-        // remove from the in flight mapping only on success. When state is the Ok variant, we are 
-        // guaranteed that the TopicScopedState object was added to the OnceCell and the topics hashmap
-        // all concurrent invocations of get_or_insert_state hold a reference to the OnceCell already
-        // and can get the created state object from the OnceCell. All future invocations of 
-        // get_or_insert_state will get the TopicScopedState from the topics hashmap. As long as there
-        // are references to the OnceCell in other tasks that are still requesting the state, the weak
-        // pointer inside topics will not be dropped
-        if state.is_ok() {
-            self.in_flight.lock().unwrap().remove(&topic_id);
-        }
         state
     }
     pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
@@ -329,6 +336,7 @@ impl<M: Message> Broker<M> {
     // TODO: periodically sweep the in_flight hashmap for OnceCells that are not referenced by any tasks calling get_or_insert_state
     // TODO: periodically sweep the topics hashmap for Weak pointers that are empty
     // (self.topics.retain(|_, w| w.strong_count() > 0))
+    // This may also be useful: https://users.rust-lang.org/t/weak-in-a-hashmap-without-periodic-cleaning/51764
 }
 
 pub fn get_id() -> usize {

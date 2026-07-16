@@ -62,6 +62,8 @@ flowchart LR
     read_taskE --> nats_client
 
     nats_client --> nats_core
+    nats_core --> sub1
+    nats_core --> sub2
 
     bc1 --> write_taskA
     bc1 --> write_taskB

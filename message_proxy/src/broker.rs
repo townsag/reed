@@ -1,5 +1,6 @@
 use std::clone::Clone;
 use bytes::Bytes;
+use opentelemetry::InstrumentationScope;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,6 +24,13 @@ use async_nats::{
     Subscriber,
 };
 use tracing::{event, Level};
+use opentelemetry::{
+    metrics::Counter,
+    global,
+    KeyValue,
+};
+
+use crate::broker::WrappedNatsClientError::{NatsClientFailure, NatsClientSkipped};
 
 // instead of passing around string literals, pass around either a reference counted
 // pointer to a string or an immutable reference to a string. Not sure how the
@@ -135,11 +143,25 @@ impl BrokerBuilder<Present> {
     pub fn build<M: Message>(
         self,
     ) -> Broker<M> {
+        let scope = InstrumentationScope::builder("mp-service.broker")
+            .with_version("v0.0.1")
+            .build();
+        let meter = global::meter_with_scope(scope);
+        let count_messages_sent_nats_core = meter
+            .u64_counter("broker.nats-core.count-messages-sent")
+            .with_description("Count of messages sent to nats core from the broker component. As of now, this only includes document operation messages")
+            .build();
+        let count_messages_received_nats_core = meter
+            .u64_counter("broker.nats-core.count-messages-received")
+            .with_description("Count of messages received from nats core by the broker component, these are document operation messages")
+            .build();
         Broker{
             topics: Arc::new(Mutex::new(HashMap::new())),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
             nats_client: self.nats_client,
             buffer_size: self.buffer_size,
+            count_messages_sent_nats_core,
+            count_messages_received_nats_core,
         }
     }
 }
@@ -147,6 +169,7 @@ impl BrokerBuilder<Present> {
 pub struct WrappedSender<M: Message> {
     broadcast_sender: Sender<Arc<M>>,
     nats_client: Client,
+    count_sent_metric: Counter<u64>,
 }
 
 pub enum WrappedNatsClientError {
@@ -182,6 +205,13 @@ impl <M: Message> WrappedSender<M> {
                 },
                 None => Err(WrappedNatsClientError::NatsClientSkipped),
             };
+        
+        let attributes = match result_nats_client {
+            Ok(_) => &[KeyValue::new("published-status", "success")],
+            Err(NatsClientFailure(_)) => &[KeyValue::new("published-status", "nats-client-failure")],
+            Err(NatsClientSkipped) => &[KeyValue::new("published-status", "nats-client-skipped")],
+        };
+        self.count_sent_metric.add(1, attributes);
 
         (result_broadcast, result_nats_client)
     }
@@ -217,7 +247,12 @@ impl <M: Message> Drop for TopicScopedState<M> {
 }
 
 impl <M: Message> TopicScopedState<M> {
-    fn new(topic_id: M::SubjectId, buffer_size: usize, mut sub: Subscriber) -> Self {
+    fn new(
+        topic_id: M::SubjectId,
+        buffer_size: usize,
+        mut sub: Subscriber,
+        count_received_metric: Counter<u64>,
+    ) -> Self {
         // create the broadcast channel
         let tx: Sender<Arc<M>> = broadcast::channel(buffer_size).0;
         let broadcast_sender = tx.clone();
@@ -232,6 +267,8 @@ impl <M: Message> TopicScopedState<M> {
                         let parsed = M::try_from(msg.payload);
                         match parsed {
                             Ok(value) => {
+                                let attributes = &[KeyValue::new("parsed-result", "success")];
+                                count_received_metric.add(1, attributes);
                                 if let Err(e) = tx.send(Arc::new(value)) {
                                     event!(Level::WARN, topic_id=%topic_id, error=%e, "failed to write message to broadcast sender");
                                     // failing to send on the broadcast channel means that all broadcast receivers for this channel 
@@ -242,6 +279,8 @@ impl <M: Message> TopicScopedState<M> {
                                 }
                             },
                             Err(e) => {
+                                let attributes = &[KeyValue::new("parsed", "failed")];
+                                count_received_metric.add(1, attributes);
                                 event!(
                                     Level::WARN, %topic_id, error=%e,
                                     "failed to deserialize message received from nats core subscriber",
@@ -267,6 +306,8 @@ pub struct Broker<M: Message> {
     // nats client implements clone by itself, no need to wrap it in an arc
     nats_client: Client,
     buffer_size: usize,
+    count_messages_sent_nats_core: Counter<u64>,
+    count_messages_received_nats_core: Counter<u64>,
 }
 
 impl<M: Message> Broker<M> {
@@ -304,7 +345,9 @@ impl<M: Message> Broker<M> {
         // get state from the topics map
         let state = cell.get_or_try_init(async || -> Result<Arc<TopicScopedState<M>>, async_nats::Error> {
             let sub = self.nats_client.subscribe(format!("operations.{}", topic_id)).await?;
-            let state = Arc::new(TopicScopedState::new(topic_id.clone(), self.buffer_size, sub));
+            let state = Arc::new(TopicScopedState::new(
+                topic_id.clone(), self.buffer_size, sub,  self.count_messages_received_nats_core.clone(),
+            ));
             self.topics.lock().unwrap().insert(topic_id.clone(), Arc::downgrade(&state));
             // remove from the in flight mapping only on success. When state is the Ok variant, we are 
             // guaranteed that the TopicScopedState struct was added to the OnceCell and the topics hashmap.
@@ -322,13 +365,13 @@ impl<M: Message> Broker<M> {
     }
     pub async fn register(&self, topic_id: M::SubjectId) -> Result<(WrappedSender<M>, WrappedReceiver<M>), async_nats::Error> {
         let state = self.get_or_insert_state(topic_id.clone()).await?;
-        // create a new receiver
-        // we pass &self.topics into clone because clone does not consume the original pointer
         let wrx: WrappedReceiver<M> = WrappedReceiver { 
             receiver: state.broadcast_sender.subscribe(), _state_guard: Arc::clone(&state),
         };
         let wtx = WrappedSender {
-            broadcast_sender: state.broadcast_sender.clone(), nats_client: self.nats_client.clone(),
+            broadcast_sender: state.broadcast_sender.clone(),
+            nats_client: self.nats_client.clone(),
+            count_sent_metric: self.count_messages_sent_nats_core.clone(),
         };
         
         Ok((wtx, wrx))

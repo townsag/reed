@@ -13,11 +13,16 @@
         - use the Futures crate now_or_never() function to only write to the nats client if the nats client is ready to accept the write without blocking
         - [x] record that the message was dropped when writing to the nats client and why it was dropped
     - [ ] record metrics
-        - [ ] when do we drop messages that are sent to the nats client mpsc channel
-            - [ ] why they are dropped
+        - [x] record the metrics such that it is clear they are coming from a module of the message proxy service and not generically from the message proxy service
+        - [x] when do we drop messages that are sent to the nats client mpsc channel
+            - [x] why they are dropped
+        - [ ] count of messages sent to nats core
+            - [x] record the metric
+            - [ ] visualize the metrics
         - [ ] what is the average length of the nats client mpsc channel
             - this is not available information
         - [ ] what is the degree of fan out for each message? Are we sending message to many machines or just one machine
+            - use the opentelemetry nats crate to add otel headers to nats messages
 - [ ] receive updates from nats core:
     - [x] update the broker to have a second sender type that we use to receive messages from nats core
         - we keep track of the count of receivers when deciding when to remove the broadcast Sender from the hashmap of topic_ids and broadcast senders
@@ -38,10 +43,19 @@
     - [ ] record metrics:
         - as per the opentelemetry api documentation
             - [ ] instruments are designed to be created once and then shared many times throughout the code, create the instruments once at the broker level then distribute the instruments where necessary using clone
+            - [x] probably also figure out the module level labelling of metrics
         - [ ] when do we fail to deserialize messages that are read from the nats subscriber
-        - [ ] what is the client to client latency time for updates? How long does it take for a client to: be received at instance 1 --> be sent over nats core --> be received by instance 2 --> be sent over the websocket to the client/
+            - [x] record the metric
+            - [ ] visualize the metric
+        - [ ] what is the client to client latency time for updates? How long does it take for an update to: be received at instance 1 --> be sent over nats core --> be received by instance 2 --> be sent over the websocket to the client
         - [ ] how many messages are we receiving from the nats subscriber per minute, per instance
             - this may require an instance id
+            - [ ] record the metric
+            - [ ] visualize the metric
+- [ ] nats core monitoring 
+    - [ ] number of connections
+    - [ ] number of subscribers
+    - [ ] number of messages per second total 
 
 ## Things to test:
 - [x] does the subscriber actually get dropped when the last task for that topic is dropped?
@@ -66,3 +80,13 @@ cargo run --bin tui -- localhost:3000 00000000-0000-0000-0000-000000000000 00000
 cargo run --bin tui -- localhost:3001 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 2 2> error2.log
 ```
 - make edits on either of the clients, watch that messages are transferred between the two instances of the message broker service using 
+
+
+outbox example: 
+- https://lobste.rs/s/4tlumh/how_implement_outbox_pattern_go_postgres
+
+On the topic of counting dropped logs and spans:
+- graceful shutdown will make it easier to count dropped spans because the exact number of dropped spans is explicitly printed
+    - this is probably also true for logs
+
+- [ ] ensure that service.instance.id is added at the instance level when the otel sdk is being created 

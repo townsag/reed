@@ -16,7 +16,9 @@ use opentelemetry_otlp::{
 use opentelemetry::{
     InstrumentationScope,
     KeyValue,
-    global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
+    global, 
+    metrics::{Counter, UpDownCounter},
+    trace::TracerProvider,
 };
 use tracing::{
     Level, field::{Field, Visit}

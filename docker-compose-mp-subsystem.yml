@@ -31,6 +31,7 @@ services:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/message_proxy?sslmode=disable
   otel_collector_contrib_pg_agent:
     image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-pg
     command:
       - --config=/etc/config.yml
     volumes:
@@ -43,18 +44,50 @@ services:
       - POSTGRES_DATABASE=message_proxy
       - OTEL_COLLECTOR_GATEWAY_OTLP_ENDPOINT=otel-collector:4317
       - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133"]
-      interval: 5s
-      retries: 5
-      start_period: 60s
-      timeout: 5s
+    # TODO: this health check always fails because wget is not
+    # available inside the otel collector contrib docker container
+    # update it to use some other mechanism
+    # healthcheck:
+    #   test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:13133"]
+    #   interval: 5s
+    #   retries: 5
+    #   start_period: 60s
+    #   timeout: 5s
     networks:
       - default
-      - telemetry
+      # - telemetry
     depends_on:
       postgres:
-        condition: service_healthy  
+        condition: service_healthy
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.enable-otlp-receiver'
+      - '--log.level=debug'
+      # otlp receiver flag enables an endpoint on the prometheus instance that receives metrics pushed from
+      # the otel collector using the otel format over http. This is different form remote write because
+      # remote write uses the prometheus format and not the otel metrics format
+    ports:
+      - 9090:9090
+    restart: unless-stopped
+    volumes:
+      - ./docker/prometheus:/etc/prometheus
+      - promData:/prometheus
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - ./docker/grafana/local-dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      # - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_LOG_LEVEL=warn 
+    ports:
+      - "3030:3000"
   message_proxy:
     # container_name: message_proxy
     build:
@@ -67,10 +100,11 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASS=${POSTGRES_PASSWORD}
       - POSTGRES_DATABASE=message_proxy
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_CH_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_PROM_OTLP_ENDPOINT=http://otel-collector-pg:4317
       - HYPERDX_INGESTION_KEY=${HYPERDX_INGESTION_KEY}
       - RUST_LOG=debug
-      - RUST_LOG_MP_MODULE=warn
+      - RUST_LOG_MP_MODULE=debug
       - CLIENT_ID_FILTERING_ENABLED=true
       - RUST_BACKTRACE=full
       - OTEL_METRIC_EXPORT_INTERVAL=5000
@@ -111,3 +145,4 @@ networks:
 
 volumes:
   pgData:
+  promData:

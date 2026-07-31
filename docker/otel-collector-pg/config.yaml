@@ -26,25 +26,21 @@ receivers:
       collection_interval: 60s
     tls:
       insecure: true
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
 
 exporters:
-  otlp_grpc:
-    endpoint: ${env:OTEL_COLLECTOR_GATEWAY_OTLP_ENDPOINT}
-    sending_queue:
-      batch:
-    # For the dev environment, use http to send the data to the gateway role instance of the otel
-    # collector because that instance does not currently have mtls set up
-    # In the production deployment we will update this to use tls
-    # auth:
-    #   authenticator: bearertokenauth
+  debug:
+  otlphttp/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
     tls:
       insecure: true
-    headers:
-      Authorization: ${env:HYPERDX_INGESTION_KEY}
 
 service:
   extensions: [health_check]
   pipelines:
     metrics:
-      receivers: [postgresql]
-      exporters: [otlp_grpc]
+      receivers: [postgresql,otlp]
+      exporters: [otlphttp/prometheus,debug]

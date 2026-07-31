@@ -16,9 +16,9 @@
         - [x] record the metrics such that it is clear they are coming from a module of the message proxy service and not generically from the message proxy service
         - [x] when do we drop messages that are sent to the nats client mpsc channel
             - [x] why they are dropped
-        - [ ] count of messages sent to nats core
+        - [x] count of messages sent to nats core
             - [x] record the metric
-            - [ ] visualize the metrics
+            - [x] visualize the metrics
         - [ ] what is the average length of the nats client mpsc channel
             - this is not available information
         - [ ] what is the degree of fan out for each message? Are we sending message to many machines or just one machine
@@ -30,7 +30,7 @@
         - ultimately decided to use regular broadcast senders, this reuses the existing code we have for sending and receiving messages
     - [x] update the broker to have ownership over the nats client value
     - [x] update the broker to create nats core subscribers
-        - [ ] when a new broadcast channel is created:
+        - [x] when a new broadcast channel is created:
             - a new nats core subscriber should be created for that broadcast channels subject
             - an async task should be created that reads from the subscriber and writes to the broadcast channel sender
                 - this allows receivers on that broadcast channel to get messages on that subject from other instances of the message proxy service
@@ -46,12 +46,12 @@
             - [x] probably also figure out the module level labelling of metrics
         - [ ] when do we fail to deserialize messages that are read from the nats subscriber
             - [x] record the metric
-            - [ ] visualize the metric
+            - [x] visualize the metric
         - [ ] what is the client to client latency time for updates? How long does it take for an update to: be received at instance 1 --> be sent over nats core --> be received by instance 2 --> be sent over the websocket to the client
-        - [ ] how many messages are we receiving from the nats subscriber per minute, per instance
+        - [x] how many messages are we receiving from the nats subscriber per minute, per instance
             - this may require an instance id
-            - [ ] record the metric
-            - [ ] visualize the metric
+            - [x] record the metric
+            - [x] visualize the metric
 - [ ] nats core monitoring 
     - [ ] number of connections
     - [ ] number of subscribers
@@ -88,5 +88,3 @@ outbox example:
 On the topic of counting dropped logs and spans:
 - graceful shutdown will make it easier to count dropped spans because the exact number of dropped spans is explicitly printed
     - this is probably also true for logs
-
-- [ ] ensure that service.instance.id is added at the instance level when the otel sdk is being created 

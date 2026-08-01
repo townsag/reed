@@ -16,6 +16,7 @@ futures-util = "0.3.32"
 opentelemetry = { version = "0.32", features = ["metrics"] }
 opentelemetry-appender-tracing = "0.32"
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.32.1"
 opentelemetry-stdout = "0.32"
 opentelemetry_sdk = { version = "0.32", features = ["experimental_metrics_bound_instruments"] }
 prost = "0.14.4"

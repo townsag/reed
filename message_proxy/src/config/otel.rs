@@ -16,7 +16,12 @@ use opentelemetry_otlp::{
 use opentelemetry::{
     InstrumentationScope,
     KeyValue,
-    global, metrics::{Counter, UpDownCounter}, trace::TracerProvider,
+    global, 
+    metrics::{Counter, UpDownCounter},
+    trace::TracerProvider,
+};
+use opentelemetry_semantic_conventions::resource::{
+    SERVICE_INSTANCE_ID,
 };
 use tracing::{
     Level, field::{Field, Visit}
@@ -81,21 +86,27 @@ impl ProviderGuard {
     //  - init logs
     fn new() -> Self {
         // TODO: read endpoint from the env
-        let endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let endpoint_ch = env::var("OTEL_EXPORTER_CH_OTLP_ENDPOINT")
             .expect("failed to read OTEL_EXPORTER_OTLP_ENDPOINT from os env");
+        let endpoint_prom = env::var("OTEL_EXPORTER_PROM_OTLP_ENDPOINT")
+            .expect("failed to read OTEL_EXPORTER_PROM_OTLP_ENDPOINT from os env");
         let hyperdx_api_key = env::var("HYPERDX_INGESTION_KEY")
             .expect("failed to read HYPERDX_INGESTION_KEY from os env");
+        // use the hostname environment variable as the instance id
+        let hostname = env::var("HOSTNAME")
+            .expect("failed to read HOSTNAME from os env");
         let mut map = MetadataMap::with_capacity(1);
         map.insert("authorization", hyperdx_api_key.parse().unwrap());
         // resource denotes the physical infra that created the telemetry
         // this is where I would put things like pod number etc.
         let resource = Resource::builder()
             .with_service_name("message-proxy")
+            .with_attribute(KeyValue::new(SERVICE_INSTANCE_ID, hostname))
             .build();
 
         let log_exporter = LogExporter::builder()
             .with_tonic()
-            .with_endpoint(endpoint.clone())
+            .with_endpoint(endpoint_ch.clone())
             .with_metadata(map.clone())
             .build()
             .expect("failed to create log exporter");
@@ -116,7 +127,7 @@ impl ProviderGuard {
 
         let span_exporter = SpanExporter::builder()
             .with_tonic()
-            .with_endpoint(endpoint.clone())
+            .with_endpoint(endpoint_ch.clone())
             .with_metadata(map.clone())
             .build()
             .expect("failed to create span exporter");
@@ -132,8 +143,8 @@ impl ProviderGuard {
 
         let metrics_exporter = MetricExporter::builder()
             .with_tonic()
-            .with_endpoint(endpoint)
-            .with_metadata(map)
+            .with_endpoint(endpoint_prom)
+            // .with_metadata(map)
             .build()
             .expect("failed to create metrics exporter");
         let reader = PeriodicReader::builder(metrics_exporter)

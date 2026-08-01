@@ -151,6 +151,7 @@ impl Repository for PgRepo {
                     "db.query.summary",
                     "write the contents of an operation sync message",
                 ),
+                KeyValue::new("db.query.name", "write_operation")
                 // TODO: extend this to read database returned error information on failure
                 // TODO: would prefer to do this without making any heap allocations
                 // KeyValue::new("error.type", "connection_timeout"),
@@ -224,6 +225,7 @@ impl Repository for PgRepo {
                     "db.query.summary",
                     "read the operations with a happens after relationship given a state vector",
                 ),
+                KeyValue::new("db.query.name", "read_operations_after_vector"),
                 // TODO: extend this to read database returned error information on failure
                 // TODO: would prefer to do this without making any heap allocations
                 // KeyValue::new("error.type", "connection_timeout"),
@@ -275,6 +277,7 @@ impl Repository for PgRepo {
                     "db.query.summary",
                     "read the offset of the last received operation given a client and topic",
                 ),
+                KeyValue::new("db.query.name", "read_last_received_offset")
                 // TODO: extend this to read database returned error information on failure
                 // TODO: would prefer to do this without making any heap allocations
                 // KeyValue::new("error.type", "connection_timeout"),
@@ -335,7 +338,7 @@ impl Repository for PgRepo {
                 KeyValue::new("db.operation.name", "SELECT"),
                 KeyValue::new("db.collection.name", "deletions"),
                 KeyValue::new("db.namespace", "message_proxy"),
-                KeyValue::new("db.query.name", "read the deletion set for a document"),
+                KeyValue::new("db.query.name", "read_doc_deletion_set"),
             ],
         );
         ret
@@ -420,7 +423,7 @@ impl Repository for PgRepo {
                 KeyValue::new("db.namespace", "message_proxy"),
                 KeyValue::new(
                     "db.query.name",
-                    "write deletion set for a client_id if it is novel",
+                    "write_deletion_set_if_novel",
                 ),
             ],
         );

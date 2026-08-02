@@ -4,25 +4,21 @@
   "metadata": {
     "name": "gz4zn5",
     "namespace": "default",
-    "uid": "a72190de-2931-4319-9c7e-d41f041c168f",
-    "resourceVersion": "1785511622454004",
-    "generation": 7,
-    "creationTimestamp": "2026-07-30T16:41:08Z",
+    "uid": "e22f1331-165c-4499-9451-2a7923b6ae42",
+    "resourceVersion": "1785604075520990",
+    "generation": 1,
+    "creationTimestamp": "2026-08-01T17:07:45Z",
     "labels": {
-      "grafana.app/deprecatedInternalID": "2206083347369984"
+      "grafana.app/deprecatedInternalID": "2937557906001920"
     },
     "annotations": {
       "grafana.app/createdBy": "access-policy:service",
-      "grafana.app/folder": "bftorbiurxlvkd",
       "grafana.app/managedBy": "classic-file-provisioning",
       "grafana.app/managerId": "Local JSON Dashboards",
-      "grafana.app/sourceChecksum": "26f8f239277861fa0e1c00c500bacac0",
+      "grafana.app/sourceChecksum": "7e61732a772361105420cc47b3f78685",
       "grafana.app/sourcePath": "/var/lib/grafana/dashboards/dashboard-1785040989072.json",
-      "grafana.app/sourceTimestamp": "1785511617000",
-      "grafana.app/updatedBy": "access-policy:service",
-      "grafana.app/updatedTimestamp": "2026-07-31T15:27:02Z",
-      "grafana.app/folderTitle": "Infrastructure",
-      "grafana.app/folderUrl": "/dashboards/f/bftorbiurxlvkd/infrastructure"
+      "grafana.app/sourceTimestamp": "1785604070000",
+      "grafana.app/folderTitle": "Infrastructure"
     }
   },
   "spec": {
@@ -871,6 +867,186 @@
             "version": "13.1.1"
           }
         }
+      },
+      "panel-7": {
+        "kind": "Panel",
+        "spec": {
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "query": {
+                      "datasource": {
+                        "name": "prometheus"
+                      },
+                      "group": "prometheus",
+                      "kind": "DataQuery",
+                      "spec": {
+                        "editorMode": "builder",
+                        "expr": "rate(mp_service_ws_count_ws_connection_created_total[$__rate_interval])",
+                        "instant": false,
+                        "key": "Q-ef7a3129-3788-4bbd-90fb-263d7a8c3e11-1",
+                        "legendFormat": "rate created {{instance}}",
+                        "range": true
+                      },
+                      "version": "v0"
+                    },
+                    "refId": "B"
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "query": {
+                      "datasource": {
+                        "name": "prometheus"
+                      },
+                      "group": "prometheus",
+                      "kind": "DataQuery",
+                      "spec": {
+                        "editorMode": "builder",
+                        "expr": "rate(mp_service_ws_count_ws_connection_closed_total[$__rate_interval])",
+                        "instant": false,
+                        "legendFormat": "rate closed {{instance}}",
+                        "range": true
+                      },
+                      "version": "v0"
+                    },
+                    "refId": "A"
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "query": {
+                      "datasource": {
+                        "name": "prometheus"
+                      },
+                      "group": "prometheus",
+                      "kind": "DataQuery",
+                      "spec": {
+                        "editorMode": "builder",
+                        "expr": "mp_service_ws_count_connected_clients",
+                        "instant": false,
+                        "key": "Q-350cd95f-cc21-4eb9-857e-d8b6aa854ad1-3",
+                        "legendFormat": "__auto",
+                        "range": true
+                      },
+                      "version": "v0"
+                    },
+                    "refId": "C"
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "description": "",
+          "id": 7,
+          "links": [],
+          "title": "WS Connection Churn",
+          "vizConfig": {
+            "group": "timeseries",
+            "kind": "VizConfig",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": 0
+                      },
+                      {
+                        "color": "red",
+                        "value": 80
+                      }
+                    ]
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byFrameRefID",
+                      "options": "C"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              }
+            },
+            "version": "13.1.1"
+          }
+        }
       }
     },
     "layout": {
@@ -953,6 +1129,19 @@
               "width": 12,
               "x": 12,
               "y": 16
+            }
+          },
+          {
+            "kind": "GridLayoutItem",
+            "spec": {
+              "element": {
+                "kind": "ElementReference",
+                "name": "panel-7"
+              },
+              "height": 8,
+              "width": 12,
+              "x": 0,
+              "y": 24
             }
           }
         ]

@@ -38,6 +38,8 @@ pub struct MetricsWS {
     count_websocket_connections: UpDownCounter<i64>,
     count_received_messages: Counter<u64>,
     count_received_contents: Counter<u64>,
+    count_websocket_connections_created: Counter<u64>,
+    count_websocket_connections_closed: Counter<u64>,
 }
 #[derive(Debug)]
 pub enum WSMessageType {
@@ -49,21 +51,26 @@ pub enum WSMessageType {
 
 pub struct WsLifecycleGuard {
     count_websocket_connections: UpDownCounter<i64>,
+    count_websocket_connections_closed: Counter<u64>,
 }
 
 impl Drop for WsLifecycleGuard {
     fn drop(&mut self) {
         self.count_websocket_connections.add(-1, &[]);
+        self.count_websocket_connections_closed.add(1, &[]);
     }
 }
 
 impl MetricsWS {
     pub fn ws_lifecycle_guard(&self) -> WsLifecycleGuard {
-        // TODO: add an attribute containing the hostname of this server
         self.count_websocket_connections.add(1, &[]);
-        // I think this clone is fine because under the hood the UpDownCounter is just
+        self.count_websocket_connections_created.add(1, &[]);
+        // this clone is fine because under the hood the UpDownCounter is just
         // an Arc
-        WsLifecycleGuard { count_websocket_connections: self.count_websocket_connections.clone() }
+        WsLifecycleGuard {
+            count_websocket_connections: self.count_websocket_connections.clone(),
+            count_websocket_connections_closed: self.count_websocket_connections_closed.clone(),
+        }
     }
     pub fn record_received_ws_message(&self, size_bytes: usize, message_type: WSMessageType) {
         let attributes = [KeyValue::new("message.type", format!("{:?}", message_type))];
@@ -330,6 +337,16 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         .i64_up_down_counter("mp-service.ws.count-connected-clients")
         .with_description("count of currently connected websocket clients for the operation proxy endpoint")
         .build();
+    let count_websocket_connections_created = meter
+        .u64_counter("mp-service.ws.count-ws-connection-created")
+        .with_description("count of created websocket connections")
+        .with_unit("connection")
+        .build();
+    let count_websocket_connections_closed = meter
+        .u64_counter("mp-service.ws.count-ws-connection-closed")
+        .with_description("count of closed websocket connections")
+        .with_unit("connection")
+        .build();
     let count_received_messages = meter
         .u64_counter("mp-service.ws.count-received-messages")
         .with_description("count of websocket messages received")
@@ -344,6 +361,8 @@ pub fn init_otel() -> (ProviderGuard, MetricsWS) {
         count_websocket_connections,
         count_received_messages,
         count_received_contents,
+        count_websocket_connections_created,
+        count_websocket_connections_closed,
     };
     (providers, metrics_ws)
 }
